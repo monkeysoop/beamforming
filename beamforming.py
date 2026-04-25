@@ -39,33 +39,44 @@ relative_microphone_positions = jax.device_put(MICROPHONE_POSITIONS - CAMERA_POS
 
 camera_pixel_microphone_time_offsets = jax.numpy.tensordot(camera_directions, relative_microphone_positions, axes=([2], [1])) / SPEED_OF_SOUND
 
+def compute_audio_strengths_for_a_chunk(chunk_start, chunk_size, camera_pixel_microphone_time_offsets, data_fft, data_frequencies, audio_strengths):
+    number_of_microphones = camera_pixel_microphone_time_offsets.shape[1]
+
+    data_shift = jax.numpy.exp(-2.0j * jax.numpy.pi * camera_pixel_microphone_time_offsets[chunk_start:(chunk_start + chunk_size), :, jax.numpy.newaxis] * data_frequencies[jax.numpy.newaxis, jax.numpy.newaxis, :])
+    data_fft_shifted = data_fft[jax.numpy.newaxis, :, :] * data_shift
+    data_fft_shifted_summed = jax.numpy.sum(data_fft_shifted, axis=1)
+    data_result = jax.numpy.real(jax.numpy.fft.ifft(data_fft_shifted_summed, axis=1))
+    audio_strengths = audio_strengths.at[chunk_start:(chunk_start + chunk_size)].set(jax.numpy.mean(jax.numpy.square(data_result), axis=1) / number_of_microphones)
+
+    return audio_strengths
+
+def compute_audio_strengths(microphone_samples, n, microphone_sample_rate, camera_pixel_microphone_time_offsets, pixel_chunk_size):
+    data_fft = jax.numpy.fft.fft(microphone_samples, axis=1)
+    data_frequencies = jax.numpy.fft.fftfreq(n, d=(1.0 / microphone_sample_rate))
+
+    original_shape = camera_pixel_microphone_time_offsets.shape
+    number_of_pixels = original_shape[0] * original_shape[1]
+    camera_pixel_microphone_time_offsets = jax.numpy.reshape(camera_pixel_microphone_time_offsets, (number_of_pixels, original_shape[2]))
+
+    delimiters = list(range(0, number_of_pixels, pixel_chunk_size))
+    sizes = sizes = [pixel_chunk_size] * (number_of_pixels // pixel_chunk_size)
+    if ((number_of_pixels % pixel_chunk_size) != 0):
+        sizes.append(number_of_pixels % pixel_chunk_size)
+
+    audio_strengths = jax.device_put(jax.numpy.zeros((number_of_pixels)))
+    for delimiter, size in zip(delimiters, sizes):
+        audio_strengths = compute_audio_strengths_for_a_chunk(delimiter, size, camera_pixel_microphone_time_offsets, data_fft, data_frequencies, audio_strengths)
+
+    audio_strengths = jax.numpy.reshape(audio_strengths, (original_shape[0], original_shape[1]))
+
+    return audio_strengths
+
 N = 1024
 
 microphone_samples = jax.device_put(np.random.rand(NUMBER_OF_MICROPHONES, NUMBER_OF_SAMPLES))
 
-data_fft = jax.numpy.fft.fft(microphone_samples, axis=1)
-
-data_frequencies = jax.numpy.fft.fftfreq(N, d=(1.0 / MICROPHONE_SAMPLE_RATE))
-
 PIXEL_CHUNK_SIZE = 1000
 
-original_shape = camera_pixel_microphone_time_offsets.shape
-number_of_pixels = original_shape[0] * original_shape[1]
-camera_pixel_microphone_time_offsets = jax.numpy.reshape(camera_pixel_microphone_time_offsets, (number_of_pixels, original_shape[2]))
-
-delimiters = list(range(0, number_of_pixels, PIXEL_CHUNK_SIZE))
-sizes = sizes = [PIXEL_CHUNK_SIZE] * (number_of_pixels // PIXEL_CHUNK_SIZE)
-if ((number_of_pixels % PIXEL_CHUNK_SIZE) != 0):
-    sizes.append(number_of_pixels % PIXEL_CHUNK_SIZE)
-
-audio_strengths = jax.device_put(jax.numpy.zeros((number_of_pixels)))
-for delimiter, size in zip(delimiters, sizes):
-    data_shift = jax.numpy.exp(-2.0j * jax.numpy.pi * camera_pixel_microphone_time_offsets[delimiter:(delimiter + size), :, jax.numpy.newaxis] * data_frequencies[jax.numpy.newaxis, jax.numpy.newaxis, :])
-    data_fft_shifted = data_fft[jax.numpy.newaxis, :, :] * data_shift
-    data_fft_shifted_summed = jax.numpy.sum(data_fft_shifted, axis=1)
-    data_result = jax.numpy.real(jax.numpy.fft.ifft(data_fft_shifted_summed, axis=1))
-    audio_strengths = audio_strengths.at[delimiter:(delimiter + size)].set(jax.numpy.mean(jax.numpy.square(data_result), axis=1) / NUMBER_OF_MICROPHONES)
-
-audio_strengths = jax.numpy.reshape(audio_strengths, (original_shape[0], original_shape[1]))
+audio_strengths = compute_audio_strengths(microphone_samples, N, MICROPHONE_SAMPLE_RATE, camera_pixel_microphone_time_offsets, PIXEL_CHUNK_SIZE)
 
 plot_heatmap(audio_strengths, 10, 10, "audio strength")
