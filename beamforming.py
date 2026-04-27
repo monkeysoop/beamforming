@@ -45,8 +45,7 @@ def compute_audio_strengths_for_a_chunk(chunk_start, chunk_size, camera_pixel_mi
     data_shift = jax.numpy.exp(-2.0j * jax.numpy.pi * camera_pixel_microphone_time_offsets[chunk_start:(chunk_start + chunk_size), :, jax.numpy.newaxis] * data_frequencies[jax.numpy.newaxis, jax.numpy.newaxis, :])
     data_fft_shifted = data_fft[jax.numpy.newaxis, :, :] * data_shift
     data_fft_shifted_summed = jax.numpy.sum(data_fft_shifted, axis=1)
-    data_result = jax.numpy.real(jax.numpy.fft.ifft(data_fft_shifted_summed, axis=1))
-    audio_strengths = audio_strengths.at[chunk_start:(chunk_start + chunk_size)].set(jax.numpy.mean(jax.numpy.square(data_result), axis=1) / number_of_microphones)
+    audio_strengths = audio_strengths.at[chunk_start:(chunk_start + chunk_size)].set(jax.numpy.mean(jax.numpy.square(jax.numpy.abs(data_fft_shifted_summed)), axis=1) / number_of_microphones)
 
     return audio_strengths
 
