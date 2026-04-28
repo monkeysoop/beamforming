@@ -39,13 +39,13 @@ relative_microphone_positions = jax.device_put(MICROPHONE_POSITIONS - CAMERA_POS
 
 camera_pixel_microphone_time_offsets = jax.numpy.tensordot(camera_directions, relative_microphone_positions, axes=([2], [1])) / SPEED_OF_SOUND
 
-def compute_audio_strengths_for_a_chunk(chunk_start, chunk_size, camera_pixel_microphone_time_offsets, data_fft, data_frequencies, audio_strengths):
+def compute_audio_strengths_for_a_chunk(camera_pixel_microphone_time_offsets, data_fft, data_frequencies, audio_strengths):
     number_of_microphones = camera_pixel_microphone_time_offsets.shape[1]
 
-    data_shift = jax.numpy.exp(-2.0j * jax.numpy.pi * camera_pixel_microphone_time_offsets[chunk_start:(chunk_start + chunk_size), :, jax.numpy.newaxis] * data_frequencies[jax.numpy.newaxis, jax.numpy.newaxis, :])
+    data_shift = jax.numpy.exp(-2.0j * jax.numpy.pi * camera_pixel_microphone_time_offsets[:, :, jax.numpy.newaxis] * data_frequencies[jax.numpy.newaxis, jax.numpy.newaxis, :])
     data_fft_shifted = data_fft[jax.numpy.newaxis, :, :] * data_shift
     data_fft_shifted_summed = jax.numpy.sum(data_fft_shifted, axis=1)
-    audio_strengths = audio_strengths.at[chunk_start:(chunk_start + chunk_size)].set(jax.numpy.mean(jax.numpy.square(jax.numpy.abs(data_fft_shifted_summed)), axis=1) / number_of_microphones)
+    audio_strengths = audio_strengths.set(jax.numpy.mean(jax.numpy.square(jax.numpy.abs(data_fft_shifted_summed)), axis=1) / number_of_microphones)
 
     return audio_strengths
 
@@ -64,7 +64,7 @@ def compute_audio_strengths(microphone_samples, n, microphone_sample_rate, camer
 
     audio_strengths = jax.device_put(jax.numpy.zeros((number_of_pixels)))
     for delimiter, size in zip(delimiters, sizes):
-        audio_strengths = compute_audio_strengths_for_a_chunk(delimiter, size, camera_pixel_microphone_time_offsets, data_fft, data_frequencies, audio_strengths)
+        audio_strengths = compute_audio_strengths_for_a_chunk(camera_pixel_microphone_time_offsets[delimiter:(delimiter + size), :], data_fft, data_frequencies, audio_strengths.at[delimiter:(delimiter + size)])
 
     audio_strengths = jax.numpy.reshape(audio_strengths, (original_shape[0], original_shape[1]))
 
