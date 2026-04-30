@@ -46,7 +46,7 @@ def compute_audio_strengths_for_a_chunk(camera_pixel_microphone_time_offsets, da
     data_shift = jax.numpy.exp(-2.0j * jax.numpy.pi * camera_pixel_microphone_time_offsets[:, jax.numpy.newaxis, :] * data_frequencies[jax.numpy.newaxis, :, jax.numpy.newaxis])
     data_fft_shifted_summed = jax.numpy.einsum("sm,psm->ps", data_fft, data_shift)
     audio_powers = jax.numpy.square(jax.numpy.abs(data_fft_shifted_summed))
-    audio_powers = audio_power.at[:, 1:-1].multiply(2.0)
+    audio_powers = audio_powers.at[:, 1:-1].multiply(2.0)
     audio_strengths = jax.numpy.sqrt(jax.numpy.sum(audio_powers, axis=1)) / n
 
     return audio_strengths
