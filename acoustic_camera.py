@@ -30,9 +30,9 @@ CAMERA_SENSOR_HEIGHT = CAMERA_SENSOR_PIXEL_SIZE * CAMERA_RESOLUTION_HEIGHT
 CAMERA_FOCAL_X = (CAMERA_FOCAL_LENGTH / CAMERA_SENSOR_WIDTH) * CAMERA_RESOLUTION_WIDTH
 CAMERA_FOCAL_Y = (CAMERA_FOCAL_LENGTH / CAMERA_SENSOR_HEIGHT) * CAMERA_RESOLUTION_HEIGHT
 
-camera_directions = create_camera_directions(CAMERA_RESOLUTION_WIDTH, CAMERA_RESOLUTION_HEIGHT, CAMERA_FOCAL_X, CAMERA_FOCAL_Y)
+camera_directions = jax.device_put(jax.numpy.array(create_camera_directions(CAMERA_RESOLUTION_WIDTH, CAMERA_RESOLUTION_HEIGHT, CAMERA_FOCAL_X, CAMERA_FOCAL_Y)))
 
-camera_rotation_matrix = jax.device_put(create_camera_rotation_matrix(jax.numpy.array([0.0, 0.0, 1.0]), CAMERA_DIRECTION, UP_DIRECTION))
+camera_rotation_matrix = jax.device_put(jax.numpy.array(create_camera_rotation_matrix(jax.numpy.array([0.0, 0.0, 1.0]), CAMERA_DIRECTION, UP_DIRECTION)))
 
 camera_directions = camera_directions @ camera_rotation_matrix.T
 
