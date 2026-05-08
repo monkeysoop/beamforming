@@ -63,7 +63,7 @@ __kernel void opencl_kernel_psm(
     barrier(CLK_LOCAL_MEM_FENCE);
 
     for (uint m = 0; m < M; m++) {
-        float phase = get_global_id(1) * shared_phases[m];
+        float phase = get_local_id(1) * shared_phases[m];
         float shift_imaginary;
         float shift_real = sincos(phase, &shift_imaginary);
         float2 shift = (float2)(shift_real, shift_imaginary);
