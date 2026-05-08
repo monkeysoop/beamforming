@@ -43,7 +43,7 @@ __kernel void opencl_kernel_psm(
     float3 camera_direction = (float3)(camera_directions[3 * get_global_id(0) + 0], camera_directions[3 * get_global_id(0) + 1], camera_directions[3 * get_global_id(0) + 2]);
     for (uint m = get_local_id(1); m < M; m += get_local_size(1)) {
         float3 microphone_position = (float3)(microphone_positions[3 * m + 0], microphone_positions[3 * m + 1], microphone_positions[3 * m + 2]);
-        float phase = 2.0 * M_PI_F * dot(camera_direction, microphone_position) * S * SS / 48000.0;
+        float phase = -2.0 * M_PI_F * dot(camera_direction, microphone_position) * S * SS / 48000.0;
         shared_phases[m] = phase;
         float shift_imaginary;
         float shift_real = sincos(phase, &shift_imaginary);
