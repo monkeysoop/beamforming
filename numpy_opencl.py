@@ -75,7 +75,7 @@ __kernel void opencl_kernel_psm(
 
     float strength_local = 0.0;
     for (uint ss = 0; ss < SS; ss++) {
-        strength_local += avgs[SS].x * avgs[SS].x + avgs[SS].y * avgs[SS].y;
+        strength_local += avgs[ss].x * avgs[ss].x + avgs[ss].y * avgs[ss].y;
     }
 
     float strength = work_group_reduce_add(strength_local);
