@@ -80,7 +80,7 @@ __kernel void opencl_kernel_psm(
 
     float strength = work_group_reduce_add(strength_local);
 
-    if (get_local_id(0) == 0) {
+    if (get_local_id(1) == 0) {
         strengths[get_group_id(0)] = strength;
     }
 }
