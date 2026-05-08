@@ -32,50 +32,51 @@ __kernel void opencl_kernel_psm(
     __global const float* data_fft, 
     __global float *strengths
 ) {
-    const uint P = 921600;
-    const uint M = 64;
-    const uint S = 64;
-    const uint SS = 16;
+    const uint NUMBER_OF_MICROPHONES = 64;
+    const uint NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS = 64;
+    const uint MICROPHONE_SAMPLE_CHUNK_SIZE = 16;
+    const uint NUMBER_OF_SAMPLES = NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS * MICROPHONE_SAMPLE_CHUNK_SIZE;
+    const float MICROPHONE_SAMPLE_RATE = 48000.0;
 
-    __local float2 shared_shift_steps[M];
-    __local float shared_phases[M];
+    __local float2 shared_shift_steps[NUMBER_OF_MICROPHONES];
+    __local float shared_phases[NUMBER_OF_MICROPHONES];
 
     float3 camera_direction = (float3)(camera_directions[3 * get_global_id(0) + 0], camera_directions[3 * get_global_id(0) + 1], camera_directions[3 * get_global_id(0) + 2]);
-    for (uint m = get_local_id(1); m < M; m += get_local_size(1)) {
-        float3 microphone_position = (float3)(microphone_positions[3 * m + 0], microphone_positions[3 * m + 1], microphone_positions[3 * m + 2]);
-        float phase = -2.0 * M_PI_F * dot(camera_direction, microphone_position) * S * SS / 48000.0;
-        shared_phases[m] = phase;
+    for (uint microphone_index = get_local_id(1); microphone_index < NUMBER_OF_MICROPHONES; microphone_index += get_local_size(1)) {
+        float3 microphone_position = (float3)(microphone_positions[3 * microphone_index + 0], microphone_positions[3 * microphone_index + 1], microphone_positions[3 * microphone_index + 2]);
+        float phase = -2.0 * M_PI_F * dot(camera_direction, microphone_position) * NUMBER_OF_SAMPLES / MICROPHONE_SAMPLE_RATE;
+        shared_phases[microphone_index] = phase;
         float shift_imaginary;
         float shift_real = sincos(phase, &shift_imaginary);
-        shared_shift_steps[m] = (float2)(shift_real, shift_imaginary);
+        shared_shift_steps[microphone_index] = (float2)(shift_real, shift_imaginary);
     }
  
-    __local float2 shared_data_fft[M * SS];
-    for (uint i = get_local_id(1); i < (M * SS); i += get_local_size(1)) {
+    __local float2 shared_data_fft[NUMBER_OF_MICROPHONES * MICROPHONE_SAMPLE_CHUNK_SIZE];
+    for (uint i = get_local_id(1); i < (NUMBER_OF_MICROPHONES * MICROPHONE_SAMPLE_CHUNK_SIZE); i += get_local_size(1)) {
         shared_data_fft[i] = (float2)(data_fft[2 * i + 0], data_fft[2 * i + 1]);
     }
 
-    float2 avgs[SS];
-    for (uint ss = 0; ss < SS; ss++) {
-        avgs[ss] = (float2)(0.0, 0.0);
+    float2 avgs[MICROPHONE_SAMPLE_CHUNK_SIZE];
+    for (uint microphone_sample_local_index = 0; microphone_sample_local_index < MICROPHONE_SAMPLE_CHUNK_SIZE; microphone_sample_local_index++) {
+        avgs[microphone_sample_local_index] = (float2)(0.0, 0.0);
     }
 
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    for (uint m = 0; m < M; m++) {
-        float phase = get_local_id(1) * shared_phases[m];
+    for (uint microphone_index = 0; microphone_index < NUMBER_OF_MICROPHONES; microphone_index++) {
+        float phase = get_local_id(1) * shared_phases[microphone_index];
         float shift_imaginary;
         float shift_real = sincos(phase, &shift_imaginary);
         float2 shift = (float2)(shift_real, shift_imaginary);
-        for (uint ss = 0; ss < SS; ss++) {
-            avgs[ss] = complex_add(avgs[ss], complex_multiply(shared_data_fft[m * SS + ss], shift));
-            shift = complex_multiply(shift, shared_shift_steps[m]);
+        for (uint microphone_sample_local_index = 0; microphone_sample_local_index < MICROPHONE_SAMPLE_CHUNK_SIZE; microphone_sample_local_index++) {
+            avgs[microphone_sample_local_index] = complex_add(avgs[microphone_sample_local_index], complex_multiply(shared_data_fft[microphone_index * MICROPHONE_SAMPLE_CHUNK_SIZE + microphone_sample_local_index], shift));
+            shift = complex_multiply(shift, shared_shift_steps[microphone_index]);
         }
     }
 
     float strength_local = 0.0;
-    for (uint ss = 0; ss < SS; ss++) {
-        strength_local += avgs[ss].x * avgs[ss].x + avgs[ss].y * avgs[ss].y;
+    for (uint microphone_sample_local_index = 0; microphone_sample_local_index < MICROPHONE_SAMPLE_CHUNK_SIZE; microphone_sample_local_index++) {
+        strength_local += avgs[microphone_sample_local_index].x * avgs[microphone_sample_local_index].x + avgs[microphone_sample_local_index].y * avgs[microphone_sample_local_index].y;
     }
 
     float strength = work_group_reduce_add(strength_local);
