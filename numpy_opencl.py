@@ -32,7 +32,9 @@ __kernel void opencl_kernel_psm(
     __global const float* data_fft, 
     __global float* strengths
 ) {
-    const uint NUMBER_OF_MICROPHONES = 64;
+    const uint NUMBER_OF_MICROPHONE_CHUNKS = 4;
+    const uint MICROPHONE_CHUNK_SIZE = 16;
+    const uint NUMBER_OF_MICROPHONES = NUMBER_OF_MICROPHONE_CHUNKS * MICROPHONE_CHUNK_SIZE;
     const uint NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS = 64;
     const uint MICROPHONE_SAMPLE_CHUNK_SIZE = 16;
     const uint NUMBER_OF_SAMPLES = NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS * MICROPHONE_SAMPLE_CHUNK_SIZE;
@@ -50,27 +52,30 @@ __kernel void opencl_kernel_psm(
         float shift_real = sincos(phase, &shift_imaginary);
         shared_shift_steps[microphone_index] = (float2)(shift_real, shift_imaginary);
     }
- 
-    __local float2 shared_data_fft[NUMBER_OF_MICROPHONES * MICROPHONE_SAMPLE_CHUNK_SIZE];
-    for (uint i = get_local_id(1); i < (NUMBER_OF_MICROPHONES * MICROPHONE_SAMPLE_CHUNK_SIZE); i += get_local_size(1)) {
-        shared_data_fft[i] = (float2)(data_fft[2 * i + 0], data_fft[2 * i + 1]);
-    }
 
     float2 avgs[MICROPHONE_SAMPLE_CHUNK_SIZE];
     for (uint microphone_sample_local_index = 0; microphone_sample_local_index < MICROPHONE_SAMPLE_CHUNK_SIZE; microphone_sample_local_index++) {
         avgs[microphone_sample_local_index] = (float2)(0.0, 0.0);
     }
 
-    barrier(CLK_LOCAL_MEM_FENCE);
+    __local float2 shared_data_fft[MICROPHONE_CHUNK_SIZE * (MICROPHONE_SAMPLE_CHUNK_SIZE + 1)];
 
-    for (uint microphone_index = 0; microphone_index < NUMBER_OF_MICROPHONES; microphone_index++) {
-        float phase = get_local_id(1) * shared_phases[microphone_index];
-        float shift_imaginary;
-        float shift_real = sincos(phase, &shift_imaginary);
-        float2 shift = (float2)(shift_real, shift_imaginary);
-        for (uint microphone_sample_local_index = 0; microphone_sample_local_index < MICROPHONE_SAMPLE_CHUNK_SIZE; microphone_sample_local_index++) {
-            avgs[microphone_sample_local_index] = complex_add(avgs[microphone_sample_local_index], complex_multiply(shared_data_fft[microphone_index * MICROPHONE_SAMPLE_CHUNK_SIZE + microphone_sample_local_index], shift));
-            shift = complex_multiply(shift, shared_shift_steps[microphone_index]);
+    for (uint microphone_chunk_index = 0; microphone_chunk_index < NUMBER_OF_MICROPHONE_CHUNKS; microphone_chunk_index++) {
+        for (uint i = get_local_id(1); i < (MICROPHONE_CHUNK_SIZE * (MICROPHONE_SAMPLE_CHUNK_SIZE + 1)); i += get_local_size(1)) {
+            shared_data_fft[i] = (float2)(data_fft[2 * (microphone_chunk_index * (MICROPHONE_CHUNK_SIZE * (MICROPHONE_SAMPLE_CHUNK_SIZE + 1)) + i) + 0], data_fft[2 * (microphone_chunk_index * (MICROPHONE_CHUNK_SIZE * (MICROPHONE_SAMPLE_CHUNK_SIZE + 1)) + i) + 1]);
+        }
+
+        barrier(CLK_LOCAL_MEM_FENCE);
+
+        for (uint microphone_index = 0; microphone_index < MICROPHONE_CHUNK_SIZE; microphone_index++) {
+            float phase = get_local_id(1) * shared_phases[microphone_index];
+            float shift_imaginary;
+            float shift_real = sincos(phase, &shift_imaginary);
+            float2 shift = (float2)(shift_real, shift_imaginary);
+            for (uint microphone_sample_local_index = 0; microphone_sample_local_index < MICROPHONE_SAMPLE_CHUNK_SIZE; microphone_sample_local_index++) {
+                avgs[microphone_sample_local_index] += complex_multiply(shared_data_fft[microphone_index * (MICROPHONE_SAMPLE_CHUNK_SIZE + 1) + microphone_sample_local_index], shift);
+                shift = complex_multiply(shift, shared_shift_steps[microphone_index]);
+            }
         }
     }
 
