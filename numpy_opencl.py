@@ -30,7 +30,7 @@ __kernel void opencl_kernel_psm(
     __global const float* camera_directions, 
     __global const float* microphone_positions, 
     __global const float* data_fft, 
-    __global float *strengths
+    __global float* strengths
 ) {
     const uint NUMBER_OF_MICROPHONES = 64;
     const uint NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS = 64;
@@ -82,7 +82,7 @@ __kernel void opencl_kernel_psm(
     float strength = work_group_reduce_add(strength_local);
 
     if (get_local_id(1) == 0) {
-        strengths[get_group_id(0)] = strength;
+        strengths[get_global_id(0)] = strength;
     }
 }
 """).build()
