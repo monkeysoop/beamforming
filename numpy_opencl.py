@@ -90,7 +90,7 @@ __kernel void opencl_kernel_psm(
         strengths[get_global_id(0)] = strength;
     }
 }
-""").build()
+""").build(options=[ "-cl-fast-relaxed-math", "-cl-mad-enable", "-cl-no-signed-zeros", "-cl-finite-math-only", ])
 
 for _ in range(10):
     t0 = time.time()
