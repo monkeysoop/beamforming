@@ -3,11 +3,19 @@ import pyopencl as cl
 import time
 
 
+
+NUMBER_OF_PIXELS = 921600
+NUMBER_OF_MICROPHONE_CHUNKS = 4
+MICROPHONE_CHUNK_SIZE = 16
+NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS = 64
+MICROPHONE_SAMPLE_CHUNK_SIZE = 16
+MICROPHONE_SAMPLE_RATE = 48000.0
+
 rng = np.random.default_rng()
-camera_directions = rng.random((921600 * 3), dtype=np.float32)
-microphone_positions = rng.random((64 * 3), dtype=np.float32)
-data_fft = rng.random((1024 * 64 * 2), dtype=np.float32)
-strengths = np.empty((921600,), dtype=np.float32)
+camera_directions = rng.random((NUMBER_OF_PIXELS * 3), dtype=np.float32)
+microphone_positions = rng.random((NUMBER_OF_MICROPHONE_CHUNKS * MICROPHONE_CHUNK_SIZE * 3), dtype=np.float32)
+data_fft = rng.random((NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS * MICROPHONE_SAMPLE_CHUNK_SIZE * NUMBER_OF_MICROPHONE_CHUNKS * MICROPHONE_CHUNK_SIZE * 2), dtype=np.float32)
+strengths = np.empty((NUMBER_OF_PIXELS,), dtype=np.float32)
 
 ctx = cl.create_some_context()
 queue = cl.CommandQueue(ctx)
@@ -32,13 +40,8 @@ __kernel void opencl_kernel_psm(
     __global const float* data_fft, 
     __global float* strengths
 ) {
-    const uint NUMBER_OF_MICROPHONE_CHUNKS = 4;
-    const uint MICROPHONE_CHUNK_SIZE = 16;
     const uint NUMBER_OF_MICROPHONES = NUMBER_OF_MICROPHONE_CHUNKS * MICROPHONE_CHUNK_SIZE;
-    const uint NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS = 64;
-    const uint MICROPHONE_SAMPLE_CHUNK_SIZE = 16;
     const uint NUMBER_OF_SAMPLES = NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS * MICROPHONE_SAMPLE_CHUNK_SIZE;
-    const float MICROPHONE_SAMPLE_RATE = 48000.0;
 
     __local float2 shared_shift_steps[NUMBER_OF_MICROPHONES];
     __local float shared_phases[NUMBER_OF_MICROPHONES];
@@ -90,14 +93,29 @@ __kernel void opencl_kernel_psm(
         strengths[get_global_id(0)] = strength;
     }
 }
-""").build(options=[ "-cl-fast-relaxed-math", "-cl-mad-enable", "-cl-no-signed-zeros", "-cl-finite-math-only", ])
+""").build(
+    options=[ 
+        "-cl-fast-relaxed-math",
+        "-cl-mad-enable",
+        "-cl-no-signed-zeros",
+        "-cl-finite-math-only",
+        f"-D NUMBER_OF_MICROPHONE_CHUNKS={NUMBER_OF_MICROPHONE_CHUNKS}",
+        f"-D MICROPHONE_CHUNK_SIZE={MICROPHONE_CHUNK_SIZE}",
+        f"-D NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS={NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS}",
+        f"-D MICROPHONE_SAMPLE_CHUNK_SIZE={MICROPHONE_SAMPLE_CHUNK_SIZE}",
+        f"-D MICROPHONE_SAMPLE_RATE={MICROPHONE_SAMPLE_RATE}"
+    ]
+)
+
+global_sizes = (NUMBER_OF_PIXELS, NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS,)
+local_sizes = (1, NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS,)
 
 for _ in range(10):
     t0 = time.time()
     prg.opencl_kernel_psm(
         queue,
-        (921600, 64,),
-        (1, 64,),
+        global_sizes,
+        local_sizes,
         camera_directions_buffer,
         microphone_positions_buffer,
         data_fft_buffer,
