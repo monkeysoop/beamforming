@@ -26,19 +26,15 @@ data_fft_buffer = cl.Buffer(ctx, cl.mem_flags.READ_ONLY | cl.mem_flags.COPY_HOST
 strengths_buffer = cl.Buffer(ctx, cl.mem_flags.WRITE_ONLY, strengths.nbytes)
 
 prg = cl.Program(ctx, """
-float2 complex_multiply(float2 a, float2 b) {
+inline float2 complex_multiply(float2 a, float2 b) {
     return (float2)((a.x * b.x - a.y * b.y), (a.x * b.y + a.y * b.x));
 }
 
-float2 complex_add(float2 a, float2 b) {
-    return (float2)((a.x + b.x), (a.y + b.y));
-}
-
 __kernel void opencl_kernel_psm(
-    __global const float* camera_directions, 
-    __global const float* microphone_positions, 
-    __global const float* data_fft, 
-    __global float* strengths
+    __global const float* restrict camera_directions,
+    __global const float* restrict microphone_positions,
+    __global const float* restrict data_fft,
+    __global float* restrict strengths
 ) {
     const uint NUMBER_OF_MICROPHONES = NUMBER_OF_MICROPHONE_CHUNKS * MICROPHONE_CHUNK_SIZE;
     const uint NUMBER_OF_SAMPLES = NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS * MICROPHONE_SAMPLE_CHUNK_SIZE;
