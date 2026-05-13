@@ -51,8 +51,8 @@ __kernel void opencl_kernel_psm(
         float3 microphone_position = (float3)(microphone_positions[3 * microphone_index + 0], microphone_positions[3 * microphone_index + 1], microphone_positions[3 * microphone_index + 2]);
         float phase = -2.0 * M_PI_F * dot(camera_direction, microphone_position) * NUMBER_OF_SAMPLES / MICROPHONE_SAMPLE_RATE;
         shared_phases[microphone_index] = phase;
-        float shift_imaginary;
-        float shift_real = sincos(phase, &shift_imaginary);
+        float shift_real;
+        float shift_imaginary = sincos(phase, &shift_real);
         shared_shift_steps[microphone_index] = (float2)(shift_real, shift_imaginary);
     }
 
@@ -72,8 +72,8 @@ __kernel void opencl_kernel_psm(
 
         for (uint microphone_index = 0; microphone_index < MICROPHONE_CHUNK_SIZE; microphone_index++) {
             float phase = get_local_id(1) * shared_phases[microphone_index];
-            float shift_imaginary;
-            float shift_real = sincos(phase, &shift_imaginary);
+            float shift_real;
+            float shift_imaginary = sincos(phase, &shift_real);
             float2 shift = (float2)(shift_real, shift_imaginary);
             for (uint microphone_sample_local_index = 0; microphone_sample_local_index < MICROPHONE_SAMPLE_CHUNK_SIZE; microphone_sample_local_index++) {
                 avgs[microphone_sample_local_index] += complex_multiply(shared_data_fft[microphone_index * (MICROPHONE_SAMPLE_CHUNK_SIZE + 1) + microphone_sample_local_index], shift);
