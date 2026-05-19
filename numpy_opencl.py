@@ -97,10 +97,21 @@ __kernel void opencl_kernel_s_p_pp_m_mm_ss_reduce(
     __global const float* restrict strength_locals,
     __global float* restrict strengths
 ) {
-    float strength_local = strength_locals[get_global_id(0)];
-    float strength = work_group_reduce_add(strength_local);
+    __local float shared_strength_locals[NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS];
+
+    shared_strength_locals[get_local_id(0)] = strength_locals[get_global_id(0)];
+
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    for (uint stride = (uint)(get_local_size(0) / 2); stride > 0; stride /= 2) {
+        if (get_local_id(0) < stride) {
+            shared_strength_locals[get_local_id(0)] += shared_strength_locals[get_local_id(0) + stride];
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+
     if (get_local_id(0) == 0) {
-        strengths[get_group_id(0)] = strength;
+        strengths[get_group_id(0)] = shared_strength_locals[0];
     }
 }
 """)
@@ -112,7 +123,6 @@ try:
             "-cl-mad-enable",
             "-cl-no-signed-zeros",
             "-cl-finite-math-only",
-            "-cl-nv-verbose",
             f"-D NUMBER_OF_MICROPHONE_CHUNKS={NUMBER_OF_MICROPHONE_CHUNKS}",
             f"-D MICROPHONE_CHUNK_SIZE={MICROPHONE_CHUNK_SIZE}",
             f"-D NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS={NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS}",
