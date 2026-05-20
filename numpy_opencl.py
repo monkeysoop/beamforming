@@ -19,7 +19,7 @@ NUMBER_OF_SAMPLES = NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS * MICROPHONE_SAMPLE_CHUNK
 rng = np.random.default_rng()
 camera_directions = rng.random((NUMBER_OF_PIXELS * 3), dtype=np.float32) - 0.5
 microphone_positions = rng.random((NUMBER_OF_MICROPHONES * 3), dtype=np.float32)
-data_fft = rng.random((NUMBER_OF_SAMPLES * NUMBER_OF_MICROPHONES * 2), dtype=np.float32)
+data_fft = np.fft.rfft((rng.random(((2 * NUMBER_OF_SAMPLES - 1), NUMBER_OF_MICROPHONES), dtype=np.float32) - 0.5), axis=0).reshape(NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS, MICROPHONE_SAMPLE_CHUNK_SIZE, NUMBER_OF_MICROPHONE_CHUNKS, MICROPHONE_CHUNK_SIZE).swapaxes(1, 2).swapaxes(2, 3).reshape(NUMBER_OF_MICROPHONES * NUMBER_OF_SAMPLES).view(np.float32)
 strength_locals = np.empty((NUMBER_OF_PIXELS * NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS), dtype=np.float32)
 strengths = np.empty((NUMBER_OF_PIXELS), dtype=np.float32)
 
@@ -90,6 +90,11 @@ __kernel void opencl_kernel_s_p_pp_m_mm_ss(
         strength_local += avgs[microphone_sample_local_index].x * avgs[microphone_sample_local_index].x + avgs[microphone_sample_local_index].y * avgs[microphone_sample_local_index].y;
     }
 
+    // correct DC bias term
+    if (get_global_id(0) == 0) {
+        strength_local -= 0.5 * avgs[0].x * avgs[0].x + avgs[0].y * avgs[0].y;
+    }
+
     strength_locals[get_global_id(1) * NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS + get_global_id(0)] = strength_local;
 }
 
@@ -97,6 +102,9 @@ __kernel void opencl_kernel_s_p_pp_m_mm_ss_reduce(
     __global const float* restrict strength_locals,
     __global float* restrict strengths
 ) {
+    const uint NUMBER_OF_MICROPHONES = NUMBER_OF_MICROPHONE_CHUNKS * MICROPHONE_CHUNK_SIZE;
+    const uint NUMBER_OF_SAMPLES = NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS * MICROPHONE_SAMPLE_CHUNK_SIZE;
+
     __local float shared_strength_locals[NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS];
 
     shared_strength_locals[get_local_id(0)] = strength_locals[get_global_id(0)];
@@ -111,7 +119,7 @@ __kernel void opencl_kernel_s_p_pp_m_mm_ss_reduce(
     }
 
     if (get_local_id(0) == 0) {
-        strengths[get_group_id(0)] = shared_strength_locals[0];
+        strengths[get_group_id(0)] = sqrt(2.0 * shared_strength_locals[0] / NUMBER_OF_MICROPHONES) / NUMBER_OF_SAMPLES;
     }
 }
 """)
