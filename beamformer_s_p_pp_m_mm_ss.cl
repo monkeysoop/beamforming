@@ -3,9 +3,9 @@ inline float2 complex_multiply(float2 a, float2 b) {
 }
 
 __kernel void kernel_beamformer(
-    __global const float* restrict camera_directions,
-    __global const float* restrict microphone_positions,
-    __global const float* restrict data_fft,
+    __global const float3* restrict camera_directions,
+    __global const float3* restrict microphone_positions,
+    __global const float2* restrict data_fft,
     __global float* restrict strength_locals
 ) {
     const uint NUMBER_OF_MICROPHONES = NUMBER_OF_MICROPHONE_CHUNKS * MICROPHONE_CHUNK_SIZE;
@@ -14,7 +14,7 @@ __kernel void kernel_beamformer(
     __local float3 shared_microphone_positions[NUMBER_OF_MICROPHONES];
 
     for (uint microphone_index = get_local_id(1); microphone_index < NUMBER_OF_MICROPHONES; microphone_index += get_local_size(1)) {
-        shared_microphone_positions[microphone_index] = (float3)(microphone_positions[3 * microphone_index + 0], microphone_positions[3 * microphone_index + 1], microphone_positions[3 * microphone_index + 2]);
+        shared_microphone_positions[microphone_index] = microphone_positions[microphone_index];
     }
 
     float2 avgs[MICROPHONE_SAMPLE_CHUNK_SIZE];
@@ -26,13 +26,12 @@ __kernel void kernel_beamformer(
 
     for (uint microphone_chunk_index = 0; microphone_chunk_index < NUMBER_OF_MICROPHONE_CHUNKS; microphone_chunk_index++) {
         for (uint i = get_local_id(1); i < (MICROPHONE_CHUNK_SIZE * MICROPHONE_SAMPLE_CHUNK_SIZE); i += get_local_size(1)) {
-            uint index = get_global_id(0) * (NUMBER_OF_MICROPHONE_CHUNKS * MICROPHONE_CHUNK_SIZE * MICROPHONE_SAMPLE_CHUNK_SIZE) + microphone_chunk_index * (MICROPHONE_CHUNK_SIZE * MICROPHONE_SAMPLE_CHUNK_SIZE) + i;
-            shared_data_fft[i] = (float2)(data_fft[2 * (index) + 0], data_fft[2 * (index) + 1]);
+            shared_data_fft[i] = data_fft[get_global_id(0) * (NUMBER_OF_MICROPHONE_CHUNKS * MICROPHONE_CHUNK_SIZE * MICROPHONE_SAMPLE_CHUNK_SIZE) + microphone_chunk_index * (MICROPHONE_CHUNK_SIZE * MICROPHONE_SAMPLE_CHUNK_SIZE) + i];
         }
 
         barrier(CLK_LOCAL_MEM_FENCE);
 
-        float3 camera_direction = (float3)(camera_directions[3 * get_global_id(1) + 0], camera_directions[3 * get_global_id(1) + 1], camera_directions[3 * get_global_id(1) + 2]);
+        float3 camera_direction = camera_directions[get_global_id(1)];
         for (uint microphone_local_index = 0; microphone_local_index < MICROPHONE_CHUNK_SIZE; microphone_local_index++) {
             float phase_step = -2.0 * M_PI_F * dot(camera_direction, shared_microphone_positions[microphone_chunk_index * MICROPHONE_CHUNK_SIZE + microphone_local_index]) * MICROPHONE_SAMPLE_RATE / (2 * NUMBER_OF_SAMPLES - 1);
             float shift_step_real;

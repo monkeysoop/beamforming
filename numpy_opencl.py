@@ -32,16 +32,25 @@ class BeamformerSPPPMMMSS:
         self.number_of_microphones = self.number_of_microphone_chunks * self.microphone_chunk_size
         self.number_of_samples = self.number_of_microphone_sample_chunks * self.microphone_sample_chunk_size
 
-        self.strength_locals = np.empty((self.number_of_pixels * self.number_of_microphone_sample_chunks), dtype=np.float32)
-        self.strengths = np.empty((self.number_of_pixels), dtype=np.float32)
+        self.camera_directions = np.empty((self.number_of_pixels,), dtype=cl.cltypes.float3)
+        self.microphone_positions = np.empty((self.number_of_microphones,), dtype=cl.cltypes.float3)
+        self.data_fft = np.empty(((self.number_of_microphones * self.number_of_samples),), dtype=cl.cltypes.float2)
+        self.strength_locals = np.empty((self.number_of_pixels * self.number_of_microphone_sample_chunks), dtype=cl.cltypes.float)
+        self.strengths = np.empty((self.number_of_pixels), dtype=cl.cltypes.float)
 
         self.ctx = cl.create_some_context()
 
-        self.camera_directions_buffer = cl.Buffer(self.ctx, cl.mem_flags.READ_ONLY | cl.mem_flags.COPY_HOST_PTR, hostbuf=camera_directions)
-        self.microphone_positions_buffer = cl.Buffer(self.ctx, cl.mem_flags.READ_ONLY | cl.mem_flags.COPY_HOST_PTR, hostbuf=microphone_positions)
-        self.data_fft_buffer = cl.Buffer(self.ctx, cl.mem_flags.READ_ONLY | cl.mem_flags.COPY_HOST_PTR, hostbuf=data_fft)
+        self.camera_directions_buffer = cl.Buffer(self.ctx, cl.mem_flags.READ_ONLY | cl.mem_flags.COPY_HOST_PTR, hostbuf=self.camera_directions)
+        self.microphone_positions_buffer = cl.Buffer(self.ctx, cl.mem_flags.READ_ONLY | cl.mem_flags.COPY_HOST_PTR, hostbuf=self.microphone_positions)
+        self.data_fft_buffer = cl.Buffer(self.ctx, cl.mem_flags.READ_ONLY | cl.mem_flags.COPY_HOST_PTR, hostbuf=self.data_fft)
         self.strength_locals_buffer = cl.Buffer(self.ctx, cl.mem_flags.READ_WRITE, self.strength_locals.nbytes)
         self.strengths_buffer = cl.Buffer(self.ctx, cl.mem_flags.WRITE_ONLY, self.strengths.nbytes)
+
+        self.queue = cl.CommandQueue(self.ctx)
+
+        self.update_camera_directions(camera_directions)
+        self.update_microphone_positions(microphone_positions)
+        self.update_data_fft(data_fft)
 
         self.prg = None
         with open(self.OPENCL_KERNEL_FILENAME, "r") as opencl_kernel_file:
@@ -65,18 +74,37 @@ class BeamformerSPPPMMMSS:
         self.kernel_beamformer_reduce_local_sizes = (self.number_of_microphone_sample_chunks,)
 
     def update_camera_directions(self, camera_directions):
-        self.camera_directions_buffer = cl.Buffer(self.ctx, cl.mem_flags.READ_ONLY | cl.mem_flags.COPY_HOST_PTR, hostbuf=camera_directions)
+        self.camera_directions["x"] = camera_directions[:, 0].copy()
+        self.camera_directions["y"] = camera_directions[:, 1].copy()
+        self.camera_directions["z"] = camera_directions[:, 2].copy()
+
+        cl.enqueue_copy(self.queue, self.camera_directions_buffer, self.camera_directions)
+        self.queue.finish()
 
     def update_microphone_positions(self, microphone_positions):
-        self.microphone_positions_buffer = cl.Buffer(self.ctx, cl.mem_flags.READ_ONLY | cl.mem_flags.COPY_HOST_PTR, hostbuf=microphone_positions)
+        self.microphone_positions["x"] = microphone_positions[:, 0].copy()
+        self.microphone_positions["y"] = microphone_positions[:, 1].copy()
+        self.microphone_positions["z"] = microphone_positions[:, 2].copy()
+
+        cl.enqueue_copy(self.queue, self.microphone_positions_buffer, self.microphone_positions)
+        self.queue.finish()
 
     def update_data_fft(self, data_fft):
-        self.data_fft_buffer = cl.Buffer(self.ctx, cl.mem_flags.READ_ONLY | cl.mem_flags.COPY_HOST_PTR, hostbuf=data_fft)
+        temp_data_fft = data_fft.copy()
+        temp_data_fft = data_fft.reshape(self.number_of_microphone_sample_chunks, self.microphone_sample_chunk_size, self.number_of_microphone_chunks, self.microphone_chunk_size)
+        temp_data_fft = temp_data_fft.swapaxes(1, 2)
+        temp_data_fft = temp_data_fft.swapaxes(2, 3)
+        temp_data_fft = temp_data_fft.reshape(self.number_of_microphones * self.number_of_samples)
+
+        self.data_fft["x"] = np.real(temp_data_fft)
+        self.data_fft["y"] = np.imag(temp_data_fft)
+
+        cl.enqueue_copy(self.queue, self.data_fft_buffer, self.data_fft)
+        self.queue.finish()
 
     def beamform(self):
-        queue = cl.CommandQueue(self.ctx)
         kernel_beamformer_event = self.prg.kernel_beamformer(
-            queue,
+            self.queue,
             self.kernel_beamformer_global_sizes,
             self.kernel_beamformer_local_sizes,
             self.camera_directions_buffer,
@@ -86,7 +114,7 @@ class BeamformerSPPPMMMSS:
         )
 
         self.prg.kernel_beamformer_reduce(
-            queue,
+            self.queue,
             self.kernel_beamformer_reduce_global_sizes,
             self.kernel_beamformer_reduce_local_sizes,
             self.strength_locals_buffer,
@@ -94,10 +122,10 @@ class BeamformerSPPPMMMSS:
             wait_for=[kernel_beamformer_event]
         )
 
-        cl.enqueue_copy(queue, self.strengths, self.strengths_buffer)
-        queue.finish()
+        cl.enqueue_copy(self.queue, self.strengths, self.strengths_buffer)
+        self.queue.finish()
 
-        return self.strengths
+        return self.strengths.astype(np.float32)
 
 NUMBER_OF_PIXEL_CHUNKS = 14400
 PIXEL_CHUNK_SIZE = 64
@@ -113,9 +141,9 @@ NUMBER_OF_SAMPLES = NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS * MICROPHONE_SAMPLE_CHUNK
 
 rng = np.random.default_rng()
 
-camera_directions = rng.random((NUMBER_OF_PIXELS * 3), dtype=np.float32) - 0.5
-microphone_positions = rng.random((NUMBER_OF_MICROPHONES * 3), dtype=np.float32)
-data_fft = np.fft.rfft((rng.random(((2 * NUMBER_OF_SAMPLES - 1), NUMBER_OF_MICROPHONES), dtype=np.float32) - 0.5), axis=0).reshape(NUMBER_OF_MICROPHONE_SAMPLE_CHUNKS, MICROPHONE_SAMPLE_CHUNK_SIZE, NUMBER_OF_MICROPHONE_CHUNKS, MICROPHONE_CHUNK_SIZE).swapaxes(1, 2).swapaxes(2, 3).reshape(NUMBER_OF_MICROPHONES * NUMBER_OF_SAMPLES).view(np.float32)
+camera_directions = rng.random((NUMBER_OF_PIXELS, 3), dtype=np.float32) - 0.5
+microphone_positions = rng.random((NUMBER_OF_MICROPHONES, 3), dtype=np.float32)
+data_fft = np.fft.rfft((rng.random(((2 * NUMBER_OF_SAMPLES - 1), NUMBER_OF_MICROPHONES), dtype=np.float32) - 0.5), axis=0)
 
 beamformer = BeamformerSPPPMMMSS(
     NUMBER_OF_PIXEL_CHUNKS,
