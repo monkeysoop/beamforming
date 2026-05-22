@@ -9,16 +9,16 @@ class BeamformerSPPPMMMSS:
 
     def __init__(
         self,
-        number_of_pixel_chunks,
-        pixel_chunk_size,
-        number_of_microphone_chunks,
-        microphone_chunk_size,
-        number_of_microphone_sample_chunks,
-        microphone_sample_chunk_size,
-        microphone_sample_rate,
-        camera_directions,
-        microphone_positions,
-        data_fft
+        number_of_pixel_chunks: int,
+        pixel_chunk_size: int,
+        number_of_microphone_chunks: int,
+        microphone_chunk_size: int,
+        number_of_microphone_sample_chunks: int,
+        microphone_sample_chunk_size: int,
+        microphone_sample_rate: int,
+        camera_directions: np.typing.NDArray[np.float32],
+        microphone_positions: np.typing.NDArray[np.float32],
+        data_fft: np.typing.NDArray[np.float32]
     ):
         self.number_of_pixel_chunks = number_of_pixel_chunks
         self.pixel_chunk_size = pixel_chunk_size
@@ -73,7 +73,13 @@ class BeamformerSPPPMMMSS:
         self.kernel_beamformer_reduce_global_sizes = ((self.number_of_pixels * self.number_of_microphone_sample_chunks),)
         self.kernel_beamformer_reduce_local_sizes = (self.number_of_microphone_sample_chunks,)
 
-    def update_camera_directions(self, camera_directions):
+    def update_camera_directions(self, camera_directions: np.typing.NDArray[np.float32]) -> None:
+        if (not isinstance(camera_directions, np.ndarray)):
+            raise TypeError
+        if (camera_directions.dtype != np.float32):
+            raise TypeError
+        if (camera_directions.shape != (self.number_of_pixels, 3)):
+            raise ValueError
         self.camera_directions["x"] = camera_directions[:, 0].copy()
         self.camera_directions["y"] = camera_directions[:, 1].copy()
         self.camera_directions["z"] = camera_directions[:, 2].copy()
@@ -81,7 +87,13 @@ class BeamformerSPPPMMMSS:
         cl.enqueue_copy(self.queue, self.camera_directions_buffer, self.camera_directions)
         self.queue.finish()
 
-    def update_microphone_positions(self, microphone_positions):
+    def update_microphone_positions(self, microphone_positions: np.typing.NDArray[np.float32]) -> None:
+        if (not isinstance(microphone_positions, np.ndarray)):
+            raise TypeError
+        if (microphone_positions.dtype != np.float32):
+            raise TypeError
+        if (microphone_positions.shape != (self.number_of_microphones, 3)):
+            raise ValueError
         self.microphone_positions["x"] = microphone_positions[:, 0].copy()
         self.microphone_positions["y"] = microphone_positions[:, 1].copy()
         self.microphone_positions["z"] = microphone_positions[:, 2].copy()
@@ -89,7 +101,13 @@ class BeamformerSPPPMMMSS:
         cl.enqueue_copy(self.queue, self.microphone_positions_buffer, self.microphone_positions)
         self.queue.finish()
 
-    def update_data_fft(self, data_fft):
+    def update_data_fft(self, data_fft: np.typing.NDArray[np.float32]) -> None:
+        if (not isinstance(data_fft, np.ndarray)):
+            raise TypeError
+        if (data_fft.dtype != np.complex64):
+            raise TypeError
+        if (data_fft.shape != (self.number_of_samples, self.number_of_microphones)):
+            raise ValueError
         temp_data_fft = data_fft.copy()
         temp_data_fft = data_fft.reshape(self.number_of_microphone_sample_chunks, self.microphone_sample_chunk_size, self.number_of_microphone_chunks, self.microphone_chunk_size)
         temp_data_fft = temp_data_fft.swapaxes(1, 2)
@@ -102,7 +120,7 @@ class BeamformerSPPPMMMSS:
         cl.enqueue_copy(self.queue, self.data_fft_buffer, self.data_fft)
         self.queue.finish()
 
-    def beamform(self):
+    def beamform(self) -> np.typing.NDArray[np.float32]:
         kernel_beamformer_event = self.prg.kernel_beamformer(
             self.queue,
             self.kernel_beamformer_global_sizes,
