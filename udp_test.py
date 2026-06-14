@@ -1,13 +1,15 @@
 from udp_multicast_tx_mac import MAC
 from udp_multicast_tx_ip import IP
 from udp_multicast_tx_udp import UDP
+from udp_multicast_tx_streamer import Streamer
 
-from litex.gen import LiteXModule, ClockDomain, Signal, If
+from litex.gen import LiteXModule, ClockDomain, Signal, If, Cat
 from litex.soc.integration.soc import SoCMini
 from litex.soc.integration.builder import Builder
 from litex.soc.cores.clock.lattice_ecp5 import ECP5PLL
+from litex.soc.interconnect.stream import Endpoint, ClockDomainsRenamer, AsyncFIFO
 
-from liteeth.common import convert_ip
+from liteeth.common import convert_ip, eth_tty_tx_description
 from liteeth.phy.ecp5rgmii import LiteEthPHYRGMII
 
 from litex_boards.platforms.colorlight_i5 import Platform
@@ -17,9 +19,27 @@ import os
 
 
 
+class Counter(LiteXModule):
+    def __init__(self, data_width):
+        self.source = Endpoint(eth_tty_tx_description(data_width))
+
+        counter = Signal(data_width)
+
+        self.comb += [
+            self.source.valid.eq(1),
+            self.source.data.eq(Cat(*[counter[(data_width - i - 8):(data_width - i)] for i in range(0, data_width, 8)])),
+        ]
+
+        self.sync += [
+            If((self.source.valid & self.source.ready),
+                counter.eq(counter + 1),
+            )
+        ]
+
 class _CRG(LiteXModule):
-    def __init__(self, platform, sys_clk_freq):
+    def __init__(self, platform, system_clock_frequency, sample_clock_frequency):
         self.clock_domains.cd_sys = ClockDomain("sys")
+        self.clock_domains.cd_sample = ClockDomain("sample")
 
         clk25 = platform.request("clk25")
 
@@ -27,17 +47,19 @@ class _CRG(LiteXModule):
         self.submodules.pll = pll
 
         pll.register_clkin(clk25, 25e6)
-        pll.create_clkout(self.cd_sys, sys_clk_freq, margin=0.0)
+        pll.create_clkout(self.cd_sys, system_clock_frequency, margin=0.0)
+        pll.create_clkout(self.cd_sample, sample_clock_frequency, margin=0.0)
 
 class UDPTestSOC(SoCMini):
     def __init__(self, fpga_ip_address, fpga_mac_address, udp_multicast_ip_address, udp_multicast_ip_port, ethernet_phy_number):
-        sys_clk_freq=125e6
+        system_clock_frequency=125e6
+        sample_clock_frequency=5e6
 
         platform = Platform(board="i5", revision="7.0", toolchain="trellis")
 
-        self.submodules.crg = _CRG(platform, sys_clk_freq)
+        self.submodules.crg = _CRG(platform, system_clock_frequency, sample_clock_frequency)
 
-        super().__init__(platform, sys_clk_freq)
+        super().__init__(platform, system_clock_frequency)
 
         led_wire = platform.request("user_led_n", 0)
 
@@ -53,6 +75,8 @@ class UDPTestSOC(SoCMini):
         self.submodules.mac = MAC(
             phy=self.ethphy,
             data_width=data_width,
+            phy_clock_domain="eth_tx",
+            core_clock_domain="sys",
             with_preamble_crc=True,
             with_sys_datapath=True,
         )
@@ -66,52 +90,26 @@ class UDPTestSOC(SoCMini):
 
         self.submodules.udp = UDP(
             ip=self.ip,
-            ip_address=None,
             data_width=data_width,
+            internal_clock_domain="sys",
         )
 
-        port = self.udp.udp_crossbar.get_port(
-            udp_multicast_ip_port,
+        self.submodules.streamer = Streamer(
+            udp=self.udp,
+            udp_multicast_ip_address=convert_ip(udp_multicast_ip_address),
+            udp_multicast_ip_port=udp_multicast_ip_port,
             data_width=data_width,
-            clock_domain="sys",
+            internal_clock_domain="sys",
+            fifo_depth=256,
         )
 
-        counter = Signal(32)
-        word_count = Signal(8)
+        self.submodules.counter = ClockDomainsRenamer("sample")(Counter(data_width))
 
-        PACKET_WORDS = 200
-
-        self.comb += [
-            port.sink.valid.eq(1),
-            port.sink.last.eq(word_count == (PACKET_WORDS - 1)),
-
-            port.sink.payload.error.eq(0),
-
-            port.sink.param.src_port.eq(udp_multicast_ip_port),
-            port.sink.param.dst_port.eq(udp_multicast_ip_port),
-            port.sink.param.ip_address.eq(convert_ip(udp_multicast_ip_address)),
-            port.sink.param.length.eq(PACKET_WORDS * (data_width // 8)),
-
-        ]
+        self.fifo = ClockDomainsRenamer({"write": "sample", "read": "sys"})(AsyncFIFO(eth_tty_tx_description(data_width), depth=None, buffered=False))
 
         self.comb += [
-            If((word_count == (PACKET_WORDS - 1)),
-                port.sink.payload.last_be.eq(0b1000),
-            ),
-        ]
-        
-        self.sync += [
-            If((port.sink.valid & port.sink.ready),
-                counter.eq(counter + 1),
-
-                If((word_count == (PACKET_WORDS - 1)),
-                    word_count.eq(0),
-                ).Else(
-                    word_count.eq(word_count + 1),
-                ),
-
-                port.sink.payload.data.eq(0xABCD0000 | word_count),
-            )
+            self.counter.source.connect(self.fifo.sink),
+            self.fifo.source.connect(self.streamer.sink),
         ]
 
 def main():

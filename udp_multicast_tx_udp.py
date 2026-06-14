@@ -12,15 +12,15 @@ class UDPMasterPort:
         self.source = Endpoint(eth_udp_user_description(data_width))
         self.sink = Endpoint(eth_udp_user_description(data_width))
 
-
 class UDPSlavePort:
     def __init__(self, data_width):
         self.sink = Endpoint(eth_udp_user_description(data_width))
         self.source = Endpoint(eth_udp_user_description(data_width))
 
 class UDPCrossbar(LiteEthCrossbar):
-    def __init__(self, data_width):
+    def __init__(self, data_width, internal_clock_domain):
         self.data_width = data_width
+        self.internal_clock_domain = internal_clock_domain
         LiteEthCrossbar.__init__(self, UDPMasterPort, "dst_port", dw=data_width)
 
     def get_port(self, udp_ip_port, data_width, clock_domain):
@@ -32,7 +32,7 @@ class UDPCrossbar(LiteEthCrossbar):
 
         self.users[udp_ip_port] = internal_port
 
-        self.clock_domain_crossing = ClockDomainCrossing(layout=eth_udp_user_description(data_width), cd_from=clock_domain, cd_to="sys")
+        self.clock_domain_crossing = ClockDomainCrossing(layout=eth_udp_user_description(data_width), cd_from=clock_domain, cd_to=self.internal_clock_domain)
         self.stride_converter = StrideConverter(description_from=eth_udp_user_description(data_width), description_to=eth_udp_user_description(self.data_width))
 
         self.comb += [
@@ -44,7 +44,7 @@ class UDPCrossbar(LiteEthCrossbar):
         return port
 
 class UDPTX(LiteXModule):
-    def __init__(self, ip_address, data_width):
+    def __init__(self, data_width):
         self.sink = Endpoint(eth_udp_user_description(data_width))
         self.source = Endpoint(eth_ipv4_user_description(data_width))
 
@@ -86,9 +86,9 @@ class UDPTX(LiteXModule):
         )
 
 class UDP(LiteXModule):
-    def __init__(self, ip, ip_address, data_width):
-        self.udp_crossbar = UDPCrossbar(data_width)
-        self.udp_tx = UDPTX(ip_address, data_width)
+    def __init__(self, ip, data_width, internal_clock_domain):
+        self.udp_crossbar = UDPCrossbar(data_width, internal_clock_domain)
+        self.udp_tx = UDPTX(data_width)
         ip_port = ip.ip_crossbar.get_port(udp_protocol, data_width)
 
         self.comb += [

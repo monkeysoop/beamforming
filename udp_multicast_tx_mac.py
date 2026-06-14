@@ -42,18 +42,18 @@ class TXDatapath(LiteXModule):
     def __init__(self):
         self.pipeline = []
 
-    def add_clock_domain_crossing(self, core_data_width, depth=32, buffered=False):
-        clock_domain_crossing = ClockDomainCrossing(eth_phy_description(core_data_width), cd_from="sys", cd_to="eth_tx", depth=depth, buffered=buffered)
+    def add_clock_domain_crossing(self, core_data_width, phy_clock_domain, core_clock_domain, depth=32, buffered=False):
+        clock_domain_crossing = ClockDomainCrossing(eth_phy_description(core_data_width), cd_from=core_clock_domain, cd_to=phy_clock_domain, depth=depth, buffered=buffered)
         self.submodules += clock_domain_crossing
         self.pipeline.append(clock_domain_crossing)
 
-    def add_stride_converter(self, core_data_width, phy_data_width):
-        stride_converter = ClockDomainsRenamer("eth_tx")(StrideConverter(description_from=eth_phy_description(core_data_width), description_to=eth_phy_description(phy_data_width)))
+    def add_stride_converter(self, core_data_width, phy_data_width, phy_clock_domain):
+        stride_converter = ClockDomainsRenamer(phy_clock_domain)(StrideConverter(description_from=eth_phy_description(core_data_width), description_to=eth_phy_description(phy_data_width)))
         self.submodules += stride_converter
         self.pipeline.append(stride_converter)
 
-    def add_last_be(self, phy_data_width):
-        last_be = ClockDomainsRenamer("eth_tx")(LiteEthMACTXLastBE(phy_data_width))
+    def add_last_be(self, phy_data_width, phy_clock_domain):
+        last_be = ClockDomainsRenamer(phy_clock_domain)(LiteEthMACTXLastBE(phy_data_width))
         self.submodules += last_be
         self.pipeline.append(last_be)
 
@@ -74,8 +74,8 @@ class TXDatapath(LiteXModule):
         self.submodules += preamble
         self.pipeline.append(preamble)
 
-    def add_gap(self, phy_data_width):
-        gap = ClockDomainsRenamer("eth_tx")(LiteEthMACGap(phy_data_width))
+    def add_gap(self, phy_data_width, phy_clock_domain):
+        gap = ClockDomainsRenamer(phy_clock_domain)(LiteEthMACGap(phy_data_width))
         self.submodules += gap
         self.pipeline.append(gap)
 
@@ -83,13 +83,13 @@ class TXDatapath(LiteXModule):
         self.submodules += Pipeline(*self.pipeline)
 
 class MACCore(LiteXModule):
-    def __init__(self, phy, data_width, with_sys_datapath=False, with_preamble_crc=True, with_padding=True):
+    def __init__(self, phy, data_width, phy_clock_domain, core_clock_domain, with_sys_datapath=False, with_preamble_crc=True, with_padding=True):
         self.sink = Endpoint(eth_phy_description(data_width))
 
         if (data_width < phy.dw):
             raise ValueError("Error, mac core data width: {} must be larger than PHY data width: {}".format(data_width, phy.dw))
 
-        clock_domain = ("sys" if (with_sys_datapath) else "eth_tx")
+        clock_domain = (core_clock_domain if (with_sys_datapath) else phy_clock_domain)
         datapath_data_width = (data_width if (with_sys_datapath) else phy.dw)
 
         if (hasattr(phy, "with_preamble_crc")):
@@ -101,11 +101,11 @@ class MACCore(LiteXModule):
         self.datapath.pipeline.append(self.sink)
 
         if (not with_sys_datapath):
-            self.datapath.add_clock_domain_crossing(data_width)
+            self.datapath.add_clock_domain_crossing(data_width, phy_clock_domain, core_clock_domain)
             if (data_width != phy.dw):
-                self.datapath.add_stride_converter(data_width, phy.dw)
+                self.datapath.add_stride_converter(data_width, phy.dw, phy_clock_domain)
             if (data_width != 8):
-                self.datapath.add_last_be(phy.dw)
+                self.datapath.add_last_be(phy.dw, phy_clock_domain)
 
         if (with_padding):
             self.datapath.add_padding(datapath_data_width, clock_domain)
@@ -115,20 +115,20 @@ class MACCore(LiteXModule):
             self.datapath.add_preamble(datapath_data_width, clock_domain)
 
         if (with_sys_datapath):
-            self.datapath.add_clock_domain_crossing(data_width)
+            self.datapath.add_clock_domain_crossing(data_width, phy_clock_domain, core_clock_domain)
             if (data_width != phy.dw):
-                self.datapath.add_stride_converter(data_width, phy.dw)
+                self.datapath.add_stride_converter(data_width, phy.dw, phy_clock_domain)
             if (data_width != 8):
-                self.datapath.add_last_be(phy.dw)
+                self.datapath.add_last_be(phy.dw, phy_clock_domain)
 
         if (not getattr(phy, "integrated_ifg_inserter", False)):
-            self.datapath.add_gap(phy.dw)
+            self.datapath.add_gap(phy.dw, phy_clock_domain)
 
         self.datapath.pipeline.append(phy)
 
 class MAC(LiteXModule):
-    def __init__(self, phy, data_width, with_preamble_crc=True, with_sys_datapath=False):
-        self.mac_core = MACCore(phy, data_width, with_sys_datapath=with_sys_datapath, with_preamble_crc=with_preamble_crc)
+    def __init__(self, phy, data_width, phy_clock_domain, core_clock_domain, with_preamble_crc=True, with_sys_datapath=False):
+        self.mac_core = MACCore(phy, data_width, phy_clock_domain, core_clock_domain, with_sys_datapath=with_sys_datapath, with_preamble_crc=with_preamble_crc)
         self.mac_crossbar = MACCrossbar(data_width)
         self.mac_packetizer = Packetizer(eth_mac_description(data_width), eth_phy_description(data_width), mac_header)
 
