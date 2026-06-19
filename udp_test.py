@@ -2,12 +2,14 @@ from udp_multicast_tx_mac import MAC
 from udp_multicast_tx_ip import IP
 from udp_multicast_tx_udp import UDP
 from udp_multicast_tx_streamer import Streamer
+from pdm_capturer import PDMCapturerStereo
 
 from litex.gen import LiteXModule, ClockDomain, Signal, If, Cat
 from litex.soc.integration.soc import SoCMini
 from litex.soc.integration.builder import Builder
 from litex.soc.cores.clock.lattice_ecp5 import ECP5PLL
 from litex.soc.interconnect.stream import Endpoint, ClockDomainsRenamer, AsyncFIFO
+from litex.build.generic_platform import Subsignal, Pins, IOStandard
 
 from liteeth.common import convert_ip, eth_tty_tx_description
 from liteeth.phy.ecp5rgmii import LiteEthPHYRGMII
@@ -19,22 +21,15 @@ import os
 
 
 
-class Counter(LiteXModule):
-    def __init__(self, data_width):
-        self.source = Endpoint(eth_tty_tx_description(data_width))
-
-        counter = Signal(data_width)
-
-        self.comb += [
-            self.source.valid.eq(1),
-            self.source.data.eq(Cat(*[counter[(data_width - i - 8):(data_width - i)] for i in range(0, data_width, 8)])),
-        ]
-
-        self.sync += [
-            If((self.source.valid & self.source.ready),
-                counter.eq(counter + 1),
-            )
-        ]
+_mp34dt01_pdm_microphones = [
+    ("microphone", 0,
+        Subsignal("data", Pins("N17")),
+        Subsignal("clock", Pins("M18")),
+        Subsignal("select_0", Pins("J20")),
+        Subsignal("select_1", Pins("L18")),
+        IOStandard("LVCMOS33"),
+    ),
+]
 
 class _CRG(LiteXModule):
     def __init__(self, platform, system_clock_frequency, sample_clock_frequency):
@@ -50,12 +45,41 @@ class _CRG(LiteXModule):
         pll.create_clkout(self.cd_sys, system_clock_frequency, margin=0.0)
         pll.create_clkout(self.cd_sample, sample_clock_frequency, margin=0.0)
 
+class PDMCapturer(LiteXModule):
+    def __init__(self, microphone, data_width):
+        self.source = Endpoint(eth_tty_tx_description(data_width))
+
+        self.submodules.pdm_capturer_stereo = PDMCapturerStereo(
+            oversample_ratio=25,
+            left_sample_first_index=3,
+            left_sample_last_index=15,
+            left_sample_threshold=8,
+            right_sample_first_index=16,
+            right_sample_last_index=2,
+            right_sample_threshold=8,
+            clock_low_first_index=0,
+            clock_high_first_index=13,
+            valid_index=2,
+        )
+
+        self.comb += [
+            microphone.select_0.eq(0),
+            microphone.select_1.eq(1),
+
+            microphone.clock.eq(self.pdm_capturer_stereo.microphone_clock),
+            self.pdm_capturer_stereo.microphone_data.eq(microphone.data),
+
+            self.source.data.eq(self.pdm_capturer_stereo.pdm_data_left << 1 | self.pdm_capturer_stereo.pdm_data_right),
+            self.source.valid.eq(self.pdm_capturer_stereo.pdm_data_valid),
+        ]
+
 class UDPTestSOC(SoCMini):
     def __init__(self, fpga_ip_address, fpga_mac_address, udp_multicast_ip_address, udp_multicast_ip_port, ethernet_phy_number):
-        system_clock_frequency=125e6
-        sample_clock_frequency=5e6
+        system_clock_frequency=60e6
+        sample_clock_frequency=60e6
 
         platform = Platform(board="i5", revision="7.0", toolchain="trellis")
+        platform.add_extension(_mp34dt01_pdm_microphones)
 
         self.submodules.crg = _CRG(platform, system_clock_frequency, sample_clock_frequency)
 
@@ -103,12 +127,14 @@ class UDPTestSOC(SoCMini):
             fifo_depth=256,
         )
 
-        self.submodules.counter = ClockDomainsRenamer("sample")(Counter(data_width))
+        microphone_0 = platform.request("microphone", 0)
+
+        self.submodules.pdm_capturer = ClockDomainsRenamer("sample")(PDMCapturer(microphone_0, data_width))
 
         self.fifo = ClockDomainsRenamer({"write": "sample", "read": "sys"})(AsyncFIFO(eth_tty_tx_description(data_width), depth=None, buffered=False))
 
         self.comb += [
-            self.counter.source.connect(self.fifo.sink),
+            self.pdm_capturer.source.connect(self.fifo.sink),
             self.fifo.source.connect(self.streamer.sink),
         ]
 
