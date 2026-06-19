@@ -3,6 +3,7 @@ from udp_multicast_tx_ip import IP
 from udp_multicast_tx_udp import UDP
 from udp_multicast_tx_streamer import Streamer
 from pdm_capturer import PDMCapturerStereo
+from cic_filter import CICFilterSingle
 
 from litex.gen import LiteXModule, ClockDomain, Signal, If, Cat
 from litex.soc.integration.soc import SoCMini
@@ -62,6 +63,12 @@ class PDMCapturer(LiteXModule):
             valid_index=2,
         )
 
+        self.submodules.cic_filter_single = CICFilterSingle(
+            number_of_cic_stages=5,
+            decimation_ratio=10,
+            out_bit_depth=32,
+        )
+
         self.comb += [
             microphone.select_0.eq(0),
             microphone.select_1.eq(1),
@@ -69,8 +76,11 @@ class PDMCapturer(LiteXModule):
             microphone.clock.eq(self.pdm_capturer_stereo.microphone_clock),
             self.pdm_capturer_stereo.microphone_data.eq(microphone.data),
 
-            self.source.data.eq(self.pdm_capturer_stereo.pdm_data_left << 1 | self.pdm_capturer_stereo.pdm_data_right),
-            self.source.valid.eq(self.pdm_capturer_stereo.pdm_data_valid),
+            self.cic_filter_single.pdm_data.eq(self.pdm_capturer_stereo.pdm_data_left),
+            self.cic_filter_single.pdm_data_valid.eq(self.pdm_capturer_stereo.pdm_data_valid),
+
+            self.source.data.eq(self.cic_filter_single.filtered_data),
+            self.source.valid.eq(self.cic_filter_single.filtered_data_valid),
         ]
 
 class UDPTestSOC(SoCMini):
