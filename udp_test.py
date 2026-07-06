@@ -3,7 +3,7 @@ from udp_multicast_tx_ip import IP
 from udp_multicast_tx_udp import UDP
 from udp_multicast_tx_streamer import Streamer
 from pdm_capturer import PDMCapturerStereo
-from cic_filter import CICFilterSingle
+from cic_filter import CICFilterGrouped
 
 from litex.gen import LiteXModule, ClockDomain, Signal, If, Cat
 from litex.soc.integration.soc import SoCMini
@@ -47,7 +47,7 @@ class _CRG(LiteXModule):
         pll.create_clkout(self.cd_sample, sample_clock_frequency, margin=0.0)
 
 class PDMCapturer(LiteXModule):
-    def __init__(self, microphone, data_width):
+    def __init__(self, microphone, data_width, clock_domain):
         self.source = Endpoint(eth_tty_tx_description(data_width))
 
         self.submodules.pdm_capturer_stereo = PDMCapturerStereo(
@@ -63,10 +63,13 @@ class PDMCapturer(LiteXModule):
             valid_index=2,
         )
 
-        self.submodules.cic_filter_single = CICFilterSingle(
+        number_of_pipelines = 25
+
+        self.submodules.cic_filter_grouped = CICFilterGrouped(
+            number_of_pipelines=number_of_pipelines,
             number_of_cic_stages=5,
             decimation_ratio=10,
-            out_bit_depth=32,
+            clock_domain=clock_domain,
         )
 
         self.comb += [
@@ -75,12 +78,40 @@ class PDMCapturer(LiteXModule):
 
             microphone.clock.eq(self.pdm_capturer_stereo.microphone_clock),
             self.pdm_capturer_stereo.microphone_data.eq(microphone.data),
+        ]
 
-            self.cic_filter_single.pdm_data.eq(self.pdm_capturer_stereo.pdm_data_left),
-            self.cic_filter_single.pdm_data_valid.eq(self.pdm_capturer_stereo.pdm_data_valid),
+        counter = Signal(min=0, max=number_of_pipelines)
 
-            self.source.data.eq(self.cic_filter_single.filtered_data),
-            self.source.valid.eq(self.cic_filter_single.filtered_data_valid),
+        pdm_left = Signal()
+        pdm_right = Signal()
+
+        self.sync += [
+            If((self.pdm_capturer_stereo.pdm_data_valid),
+                pdm_left.eq(self.pdm_capturer_stereo.pdm_data_left),
+                pdm_right.eq(self.pdm_capturer_stereo.pdm_data_right),
+            ),
+
+            self.cic_filter_grouped.pdm_data_valid.eq(1),
+            If((counter == 0),
+                self.cic_filter_grouped.pdm_data.eq(pdm_left),
+            ).Elif((counter == 1),
+                self.cic_filter_grouped.pdm_data.eq(pdm_right),
+            ).Else(
+                self.cic_filter_grouped.pdm_data.eq(0),
+            ),
+
+            If((self.cic_filter_grouped.filtered_data_valid),
+                self.source.data.eq(self.cic_filter_grouped.filtered_data),
+                self.source.valid.eq(1),
+            ).Else(
+                self.source.valid.eq(0),
+            ),
+
+            If(counter == (number_of_pipelines - 1),
+                counter.eq(0),
+            ).Else(
+                counter.eq(counter + 1),
+            ),
         ]
 
 class UDPTestSOC(SoCMini):
@@ -139,7 +170,7 @@ class UDPTestSOC(SoCMini):
 
         microphone_0 = platform.request("microphone", 0)
 
-        self.submodules.pdm_capturer = ClockDomainsRenamer("sample")(PDMCapturer(microphone_0, data_width))
+        self.submodules.pdm_capturer = ClockDomainsRenamer("sample")(PDMCapturer(microphone_0, data_width, "sample"))
 
         self.fifo = ClockDomainsRenamer({"write": "sample", "read": "sys"})(AsyncFIFO(eth_tty_tx_description(data_width), depth=None, buffered=False))
 
