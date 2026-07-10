@@ -5,7 +5,7 @@ from udp_multicast_tx_streamer import Streamer
 from pdm_capturer import PDMCapturerStereo
 from cic_filter import CICFilterGrouped
 
-from litex.gen import LiteXModule, ClockDomain, Signal, If, Cat
+from litex.gen import LiteXModule, ClockDomain, Signal, If
 from litex.soc.integration.soc import SoCMini
 from litex.soc.integration.builder import Builder
 from litex.soc.cores.clock.lattice_ecp5 import ECP5PLL
@@ -172,7 +172,7 @@ class UDPTestSOC(SoCMini):
 
         self.submodules.pdm_capturer = ClockDomainsRenamer("sample")(PDMCapturer(microphone_0, data_width, "sample"))
 
-        self.fifo = ClockDomainsRenamer({"write": "sample", "read": "sys"})(AsyncFIFO(eth_tty_tx_description(data_width), depth=None, buffered=False))
+        self.fifo = ClockDomainsRenamer({"write": "sample", "read": "sys"})(AsyncFIFO(eth_tty_tx_description(data_width), depth=1024, buffered=True))
 
         self.comb += [
             self.pdm_capturer.source.connect(self.fifo.sink),
