@@ -1,4 +1,5 @@
 from litex.gen import LiteXModule, Signal, If, Array, Memory, WRITE_FIRST
+from litex.soc.interconnect.stream import Endpoint, EndpointDescription
 
 import math
 
@@ -99,12 +100,8 @@ class FIRFilterMultiplierBlock(LiteXModule):
 
 class FIRFilter(LiteXModule):
     def __init__(self, number_of_pipelines, data_width, number_of_multipliers, number_of_taps, taps, taps_data_width, accumulator_data_width, clock_domain):
-        self.input_data = Signal(data_width)
-        self.input_data_valid = Signal()
-        self.input_data_ready = Signal()
-
-        self.filtered_data = Signal(accumulator_data_width)
-        self.filtered_data_valid = Signal()
+        self.sink = Endpoint(EndpointDescription([("data", data_width)]))
+        self.source = Endpoint(EndpointDescription([("data", accumulator_data_width)]))
 
         taps_per_multipliers = int(number_of_taps / number_of_multipliers)
 
@@ -125,8 +122,8 @@ class FIRFilter(LiteXModule):
             fir_blocks.append(fir_block)
 
         self.comb += [
-            fir_blocks[0].input_data.eq(self.input_data),
-            self.input_data_ready.eq(fir_blocks[0].taps_counter == (taps_per_multipliers - 1)),
+            fir_blocks[0].input_data.eq(self.sink.data),
+            self.sink.ready.eq(fir_blocks[0].taps_counter == (taps_per_multipliers - 1)),
         ]
 
         for i in range(1, len(fir_blocks)):
@@ -136,12 +133,12 @@ class FIRFilter(LiteXModule):
 
         for fir_block in fir_blocks:
             self.comb += [
-                fir_block.input_data_valid.eq(self.input_data_valid),
+                fir_block.input_data_valid.eq(self.sink.valid),
             ]
 
         self.sync += [
-            self.filtered_data_valid.eq(fir_blocks[0].accumulated_data_valid),
+            self.source.valid.eq(fir_blocks[0].accumulated_data_valid),
             If((fir_blocks[0].accumulated_data_valid),
-                self.filtered_data.eq(sum([fir_block.accumulated_data for fir_block in fir_blocks])),
+                self.source.data.eq(sum([fir_block.accumulated_data for fir_block in fir_blocks])),
             ),
         ]
