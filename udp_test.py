@@ -3,7 +3,7 @@ from udp_multicast_tx_ip import IP
 from udp_multicast_tx_udp import UDP
 from udp_multicast_tx_streamer import Streamer
 from pdm_capturer import PDMCapturerStereo
-from cic_filter import CICFilterGrouped
+from cic_filter import CICFilter
 
 from litex.gen import LiteXModule, ClockDomain, Signal, If
 from litex.soc.integration.soc import SoCMini
@@ -65,7 +65,7 @@ class PDMCapturer(LiteXModule):
 
         number_of_pipelines = 25
 
-        self.submodules.cic_filter_grouped = CICFilterGrouped(
+        self.submodules.cic_filter = CICFilter(
             number_of_pipelines=number_of_pipelines,
             number_of_cic_stages=5,
             decimation_ratio=10,
@@ -91,17 +91,17 @@ class PDMCapturer(LiteXModule):
                 pdm_right.eq(self.pdm_capturer_stereo.pdm_data_right),
             ),
 
-            self.cic_filter_grouped.pdm_data_valid.eq(1),
+            self.cic_filter.pdm_data_valid.eq(1),
             If((counter == 0),
-                self.cic_filter_grouped.pdm_data.eq(pdm_left),
+                self.cic_filter.pdm_data.eq(pdm_left),
             ).Elif((counter == 1),
-                self.cic_filter_grouped.pdm_data.eq(pdm_right),
+                self.cic_filter.pdm_data.eq(pdm_right),
             ).Else(
-                self.cic_filter_grouped.pdm_data.eq(0),
+                self.cic_filter.pdm_data.eq(0),
             ),
 
-            If((self.cic_filter_grouped.filtered_data_valid),
-                self.source.data.eq(self.cic_filter_grouped.filtered_data),
+            If((self.cic_filter.filtered_data_valid),
+                self.source.data.eq(self.cic_filter.filtered_data),
                 self.source.valid.eq(1),
             ).Else(
                 self.source.valid.eq(0),
