@@ -7,22 +7,22 @@ import math
 
 class FIRFilterMultiplierBlock(LiteXModule):
     def __init__(self, number_of_pipelines, data_width, number_of_taps, taps, taps_data_width, accumulator_data_width, clock_domain):
-        self.input_data = Signal(data_width)
+        self.input_data = Signal(bits_sign=(data_width, True))
         self.input_data_valid = Signal()
 
-        self.output_data = Signal(data_width)
+        self.output_data = Signal(bits_sign=(data_width, True))
 
-        self.accumulated_data = Signal(accumulator_data_width)
+        self.accumulated_data = Signal(bits_sign=(accumulator_data_width, True))
         self.accumulated_data_valid = Signal()
 
-        buffer = Memory(width=data_width, depth=(number_of_pipelines * number_of_taps))
+        buffer = Memory(width=data_width, depth=((number_of_pipelines * number_of_taps) + 1)) # the +1 to depth is in case depth is 1 which would throw an error
         buffer_write_port = buffer.get_port(write_capable=True, async_read=False, has_re=False, we_granularity=0, mode=WRITE_FIRST, clock_domain=clock_domain)
         buffer_read_port = buffer.get_port(write_capable=False, async_read=False, has_re=True, we_granularity=0, mode=WRITE_FIRST, clock_domain=clock_domain)
         self.specials += buffer
         self.specials += buffer_write_port
         self.specials += buffer_read_port
 
-        taps_memory = Memory(width=taps_data_width, depth=number_of_taps, init=taps)
+        taps_memory = Memory(width=taps_data_width, depth=(number_of_taps + 1), init=taps) # the +1 to depth is in case depth is 1 which would throw an error
         taps_read_port = taps_memory.get_port(write_capable=False, async_read=False, has_re=True, we_granularity=0, mode=WRITE_FIRST, clock_domain=clock_domain)
         self.specials += taps_memory
         self.specials += taps_read_port
@@ -74,14 +74,30 @@ class FIRFilterMultiplierBlock(LiteXModule):
             self.output_data.eq(buffer_read_port.dat_r),
         ]
 
+        tap = Signal(bits_sign=(taps_data_width, True))
+        data = Signal(bits_sign=(data_width, True))
+        multiplied_data = Signal(bits_sign=((taps_data_width + data_width), True))
+
         self.sync += [
             If((self.input_data_valid),
+                tap.eq(taps_read_port.dat_r),
                 If((self.taps_counter == 0),
                     buffer_write_port.dat_w.eq(self.input_data),
-                    self.accumulated_data.eq(taps_read_port.dat_r * self.input_data),
+                    data.eq(self.input_data),
                 ).Else(
                     buffer_write_port.dat_w.eq(buffer_read_port.dat_r),
-                    self.accumulated_data.eq(self.accumulated_data + (taps_read_port.dat_r * buffer_read_port.dat_r)),
+                    data.eq(buffer_read_port.dat_r),
+                ),
+                multiplied_data.eq(tap * data),
+                If((self.taps_counter == 1),
+                    self.accumulated_data_valid.eq(1),
+                ).Else(
+                    self.accumulated_data_valid.eq(0),
+                ),
+                If((self.taps_counter == 2),
+                    self.accumulated_data.eq(multiplied_data),
+                ).Else(
+                    self.accumulated_data.eq(self.accumulated_data + multiplied_data),
                 ),
                 If((buffer_counter == ((number_of_pipelines * number_of_taps) - 1)),
                     buffer_counter.eq(0),
@@ -90,18 +106,16 @@ class FIRFilterMultiplierBlock(LiteXModule):
                 ),
                 If((self.taps_counter == (number_of_taps - 1)),
                     self.taps_counter.eq(0),
-                    self.accumulated_data_valid.eq(1),
                 ).Else(
                     self.taps_counter.eq(self.taps_counter + 1),
-                    self.accumulated_data_valid.eq(0),
                 ),
             ),
         ]
 
 class FIRFilter(LiteXModule):
     def __init__(self, number_of_pipelines, data_width, number_of_multipliers, number_of_taps, taps, taps_data_width, accumulator_data_width, clock_domain):
-        self.sink = Endpoint(EndpointDescription([("data", data_width)]))
-        self.source = Endpoint(EndpointDescription([("data", accumulator_data_width)]))
+        self.sink = Endpoint(EndpointDescription([("data", data_width, True)]))
+        self.source = Endpoint(EndpointDescription([("data", accumulator_data_width, True)]))
 
         taps_per_multipliers = int(number_of_taps / number_of_multipliers)
 
