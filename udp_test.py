@@ -91,17 +91,17 @@ class PDMCapturer(LiteXModule):
                 pdm_right.eq(self.pdm_capturer_stereo.pdm_data_right),
             ),
 
-            self.cic_filter.pdm_data_valid.eq(1),
+            self.cic_filter.sink.valid.eq(1),
             If((counter == 0),
-                self.cic_filter.pdm_data.eq(pdm_left),
+                self.cic_filter.sink.data.eq(pdm_left),
             ).Elif((counter == 1),
-                self.cic_filter.pdm_data.eq(pdm_right),
+                self.cic_filter.sink.data.eq(pdm_right),
             ).Else(
-                self.cic_filter.pdm_data.eq(0),
+                self.cic_filter.sink.data.eq(0),
             ),
 
-            If((self.cic_filter.filtered_data_valid),
-                self.source.data.eq(self.cic_filter.filtered_data),
+            If((self.cic_filter.source.valid),
+                self.source.data.eq(self.cic_filter.source.data),
                 self.source.valid.eq(1),
             ).Else(
                 self.source.valid.eq(0),

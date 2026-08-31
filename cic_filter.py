@@ -1,22 +1,23 @@
 from litex.gen import LiteXModule, Signal, If, Array, Memory, WRITE_FIRST
+from litex.soc.interconnect.stream import Endpoint, EndpointDescription
 
 import math
 
 
 
 class CICFilterIntegratorStages(LiteXModule):
-    def __init__(self, number_of_pipelines, number_of_cic_stages, decimation_ratio, register_max_bit_width, register_min_value, register_max_value, clock_domain):
-        self.integrators_input_data = Signal(min=register_min_value, max=register_max_value)
+    def __init__(self, number_of_pipelines, number_of_cic_stages, decimation_ratio, register_bit_width, clock_domain):
+        self.integrators_input_data = Signal(bits_sign=(register_bit_width, True))
         self.integrators_input_data_valid = Signal()
 
-        self.integrators_output_data = Signal(min=register_min_value, max=register_max_value)
+        self.integrators_output_data = Signal(bits_sign=(register_bit_width, True))
         self.integrators_output_data_valid = Signal()
 
         integrator_write_memory_ports = []
         integrator_read_memory_ports = []
 
         for _ in range(number_of_cic_stages):
-            integrator_memory = Memory(width=register_max_bit_width, depth=number_of_pipelines)
+            integrator_memory = Memory(width=register_bit_width, depth=number_of_pipelines)
             integrator_write_memory_port = integrator_memory.get_port(write_capable=True, async_read=False, has_re=False, we_granularity=0, mode=WRITE_FIRST, clock_domain=clock_domain)
             integrator_read_memory_port = integrator_memory.get_port(write_capable=False, async_read=False, has_re=True, we_granularity=0, mode=WRITE_FIRST, clock_domain=clock_domain)
             integrator_write_memory_ports.append(integrator_write_memory_port)
@@ -89,19 +90,19 @@ class CICFilterIntegratorStages(LiteXModule):
         ]
 
 class CICFilterCombStages(LiteXModule):
-    def __init__(self, number_of_pipelines, number_of_cic_stages, register_max_bit_width, register_min_value, register_max_value, clock_domain):
-        self.combs_input_data = Signal(min=register_min_value, max=register_max_value)
+    def __init__(self, number_of_pipelines, number_of_cic_stages, register_bit_width, clock_domain):
+        self.combs_input_data = Signal(bits_sign=(register_bit_width, True))
         self.combs_input_data_valid = Signal()
 
-        self.combs_output_data = Signal(min=register_min_value, max=register_max_value)
+        self.combs_output_data = Signal(bits_sign=(register_bit_width, True))
         self.combs_output_data_valid = Signal()
         self.combs_output_data_pipeline_index = Signal(min=0, max=(2 * number_of_pipelines)) # need to double it because intermediate calculations otherwise would overflow
 
         comb_write_memory_ports = []
         comb_read_memory_ports = []
 
-        for _ in range(number_of_cic_stages):
-            comb_memory = Memory(width=register_max_bit_width, depth=number_of_pipelines)
+        for _ in range(number_of_cic_stages):   
+            comb_memory = Memory(width=register_bit_width, depth=number_of_pipelines)
             comb_write_memory_port = comb_memory.get_port(write_capable=True, async_read=False, has_re=False, we_granularity=0, mode=WRITE_FIRST, clock_domain=clock_domain)
             comb_read_memory_port = comb_memory.get_port(write_capable=False, async_read=False, has_re=True, we_granularity=0, mode=WRITE_FIRST, clock_domain=clock_domain)
             comb_write_memory_ports.append(comb_write_memory_port)
@@ -177,46 +178,39 @@ class CICFilterCombStages(LiteXModule):
 
 class CICFilter(LiteXModule):
     def __init__(self, number_of_pipelines, number_of_cic_stages, decimation_ratio, clock_domain):
-        register_max_bit_width = 2 + math.ceil(number_of_cic_stages * math.log2(decimation_ratio))
-        register_min_value = -1 * 2**(register_max_bit_width - 1)
-        register_max_value = 2**(register_max_bit_width - 1) - 1
+        self.register_max_bit_width = 2 + math.ceil(number_of_cic_stages * math.log2(decimation_ratio))
 
-        self.pdm_data = Signal(2)
-        self.pdm_data_valid = Signal()
-        self.filtered_data = Signal(min=register_min_value, max=register_max_value)
-        self.filtered_data_valid = Signal()
-        self.filtered_data_pipeline_index = Signal(min=0, max=number_of_pipelines)
+        self.sink = Endpoint(EndpointDescription([("data", 2, True)]))
+        self.source = Endpoint(EndpointDescription([("data", self.register_max_bit_width, True)]))
+
+        self.filtered_data_pipeline_index = Signal(32)
 
         self.submodules.integrator_stages = CICFilterIntegratorStages(
             number_of_pipelines=number_of_pipelines,
             number_of_cic_stages=number_of_cic_stages,
             decimation_ratio=decimation_ratio,
-            register_max_bit_width=register_max_bit_width,
-            register_min_value=register_min_value,
-            register_max_value=register_max_value,
+            register_bit_width=self.register_max_bit_width,
             clock_domain=clock_domain,
         )
 
         self.submodules.comb_stages = CICFilterCombStages(
             number_of_pipelines=number_of_pipelines,
             number_of_cic_stages=number_of_cic_stages,
-            register_max_bit_width=register_max_bit_width,
-            register_min_value=register_min_value,
-            register_max_value=register_max_value,
+            register_bit_width=self.register_max_bit_width,
             clock_domain=clock_domain,
         )
 
         integrator_offset = (self.integrator_stages.integrators_output_index_offset + 1) % number_of_pipelines # +1 is because we use this inside a sync block which adds 1 more clock cycle of latency
 
         self.sync += [
-            self.integrator_stages.integrators_input_data.eq(2 * self.pdm_data - 1),
-            self.integrator_stages.integrators_input_data_valid.eq(self.pdm_data_valid),
+            self.integrator_stages.integrators_input_data.eq(2 * self.sink.data - 1),
+            self.integrator_stages.integrators_input_data_valid.eq(self.sink.valid),
 
             self.comb_stages.combs_input_data.eq(self.integrator_stages.integrators_output_data),
             self.comb_stages.combs_input_data_valid.eq(self.integrator_stages.integrators_output_data_valid),
 
-            self.filtered_data.eq(self.comb_stages.combs_output_data),
-            self.filtered_data_valid.eq(self.comb_stages.combs_output_data_valid),
+            self.source.data.eq(self.comb_stages.combs_output_data),
+            self.source.valid.eq(self.comb_stages.combs_output_data_valid),
 
             If(((self.comb_stages.combs_output_data_pipeline_index + integrator_offset) >= number_of_pipelines),
                 self.filtered_data_pipeline_index.eq(self.comb_stages.combs_output_data_pipeline_index + (integrator_offset - number_of_pipelines)),
