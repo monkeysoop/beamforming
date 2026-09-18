@@ -1,3 +1,5 @@
+from filter_validator import validate_chain
+
 import numpy as np
 from scipy import signal
 
@@ -364,9 +366,40 @@ for (cic_decimation_ratio, number_of_cic_stages, fir_decimation_ratios, number_o
     combined_frequencies, combined_response, combined_ripple, combined_attenuation, firs_taps = fir_design_result
     results.append([combined_ripple, combined_attenuation, (cic_decimation_ratio, number_of_cic_stages, fir_decimation_ratios, number_of_multipliers_set, compensation_cutoff_factor, firs_taps)])
     print("progress: ", round((100.0 * (iteration / overall_number_of_iterations)), 2), "%%    iteration:", iteration, "/", overall_number_of_iterations, "   ripple:", combined_ripple, "   attenuation:", combined_attenuation)
+#    plt.plot(combined_frequencies, 20.0 * np.log10(np.maximum(np.abs(combined_response), 1.0e-12)))
+
+
+
 
 results = sorted(results, key=(lambda x: x[1]), reverse=True)
 
 for result in results[:20]:
     ripple, attenuation, (cic_decimation_ratio, number_of_cic_stages, fir_decimation_ratios, number_of_multipliers_set, compensation_cutoff_factor, firs_taps) = result
     print("ripple:", round(ripple, 4), "   attenuation:", round(attenuation, 2), "   cic ratio:", cic_decimation_ratio, "   cic stages:", number_of_cic_stages, "   fir ratios:", fir_decimation_ratios, "   multipliers:", number_of_multipliers_set, "   compensation cutoff:", compensation_cutoff_factor, "   firs taps:", [[int(i) for i in fir_taps] for fir_taps in firs_taps])
+
+_, _, (cic_decimation_ratio, number_of_cic_stages, fir_decimation_ratios, _, _, firs_taps) = results[0]
+
+synthetic_outputs, quantized_outputs, gains = validate_chain(
+    sample_rate=PDM_SAMPLE_FREQUENCY,
+    passband_edge=PASSBAND_EDGE_FREQUENCY,
+    stopband_edge=STOPBAND_EDGE_FREQUENCY,
+    bit_depth=BIT_DEPTH,
+    number_of_cic_stages=number_of_cic_stages,
+    cic_decimation_ratio=cic_decimation_ratio,
+    fir_decimation_ratios=fir_decimation_ratios,
+    firs_taps=firs_taps,
+    number_of_frequencies=NUMBER_OF_FREQUENCIES,
+)
+
+for synthetic_output, quantized_output, gain in zip(synthetic_outputs[-1:], quantized_outputs[-1:], gains[-1:]):
+    normalized_synthetic_output = np.array(synthetic_output) / gain
+    synthetic_frequencies = np.fft.rfftfreq(normalized_synthetic_output.shape[0], d=(1.0 / OUTPUT_FREQUENCY))
+    synthetic_response = np.fft.rfft(normalized_synthetic_output)
+
+    normalized_quantized_output = np.array(quantized_output)
+    quantized_frequencies = np.fft.rfftfreq(normalized_quantized_output.shape[0], d=(1.0 / OUTPUT_FREQUENCY))
+    quantized_response = np.fft.rfft(normalized_quantized_output)
+
+    synthetic_ripple, _ = calculate_fir_ripple_and_attenuation(synthetic_response, OUTPUT_FREQUENCY, PASSBAND_EDGE_FREQUENCY, 0.0)
+    quantized_ripple, _ = calculate_fir_ripple_and_attenuation(quantized_response, OUTPUT_FREQUENCY, PASSBAND_EDGE_FREQUENCY, 0.0)
+    print("synthetic ripple:", round(synthetic_ripple, 4), "quantized ripple:", round(quantized_ripple, 4))
