@@ -322,7 +322,7 @@ NUMBER_OF_MICROPHONES = 50
 BIT_DEPTH = 18
 
 MAX_NUMBER_OF_CIC_STAGES = 5
-NUMBER_OF_FREQUENCIES = 1024
+NUMBER_OF_FREQUENCIES = 10240
 COMPENSATION_FILTER_ITERATIONS_LIMIT = 10
 REMEZ_ITERATION_LIMIT = 100
 REMEZ_GRID_DENSITY = 64
@@ -379,11 +379,12 @@ for result in results[:20]:
 
 _, _, (cic_decimation_ratio, number_of_cic_stages, fir_decimation_ratios, _, _, firs_taps) = results[0]
 
-synthetic_outputs, quantized_outputs, gains = validate_chain(
+synthetic_outputs, quantized_outputs, synthetic_gains, quantized_gains = validate_chain(
     sample_rate=PDM_SAMPLE_FREQUENCY,
     passband_edge=PASSBAND_EDGE_FREQUENCY,
     stopband_edge=STOPBAND_EDGE_FREQUENCY,
-    bit_depth=BIT_DEPTH,
+    bit_width=BIT_DEPTH,
+    taps_bit_width=BIT_DEPTH,
     number_of_cic_stages=number_of_cic_stages,
     cic_decimation_ratio=cic_decimation_ratio,
     fir_decimation_ratios=fir_decimation_ratios,
@@ -391,12 +392,12 @@ synthetic_outputs, quantized_outputs, gains = validate_chain(
     number_of_frequencies=NUMBER_OF_FREQUENCIES,
 )
 
-for synthetic_output, quantized_output, gain in zip(synthetic_outputs[-1:], quantized_outputs[-1:], gains[-1:]):
-    normalized_synthetic_output = np.array(synthetic_output) / gain
+for synthetic_output, quantized_output, synthetic_gain, quantized_gain in zip(synthetic_outputs[-1:], quantized_outputs[-1:], synthetic_gains[-1:], quantized_gains[-1:]):
+    normalized_synthetic_output = np.array(synthetic_output) / synthetic_gain
     synthetic_frequencies = np.fft.rfftfreq(normalized_synthetic_output.shape[0], d=(1.0 / OUTPUT_FREQUENCY))
     synthetic_response = np.fft.rfft(normalized_synthetic_output)
 
-    normalized_quantized_output = np.array(quantized_output)
+    normalized_quantized_output = np.array(quantized_output) / quantized_gain
     quantized_frequencies = np.fft.rfftfreq(normalized_quantized_output.shape[0], d=(1.0 / OUTPUT_FREQUENCY))
     quantized_response = np.fft.rfft(normalized_quantized_output)
 

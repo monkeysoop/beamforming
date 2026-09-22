@@ -176,7 +176,6 @@ class FIRFilter(LiteXModule):
         taps_per_multipliers = int(number_of_taps / number_of_multipliers)
 
         taps = [taps[i:(i + taps_per_multipliers)] for i in range(0, number_of_taps, taps_per_multipliers)]
-        taps = [(tap_block[1:] + [tap_block[0]]) for tap_block in taps]
 
         fir_blocks = []
         for i in range(number_of_multipliers):
