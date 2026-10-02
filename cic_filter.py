@@ -178,12 +178,12 @@ class CICFilterCombStages(LiteXModule):
 
 class CICFilter(LiteXModule):
     def __init__(self, number_of_pipelines, number_of_cic_stages, decimation_ratio, clock_domain):
-        self.register_max_bit_width = 2 + math.ceil(number_of_cic_stages * math.log2(decimation_ratio))
+        self.register_max_bit_width = 1 + math.ceil(number_of_cic_stages * math.log2(decimation_ratio))
 
         self.sink = Endpoint(EndpointDescription([("data", 2, True)]))
         self.source = Endpoint(EndpointDescription([("data", self.register_max_bit_width, True)]))
 
-        self.filtered_data_pipeline_index = Signal(32)
+        self.filtered_data_pipeline_index = Signal(min=0, max=number_of_pipelines)
 
         self.submodules.integrator_stages = CICFilterIntegratorStages(
             number_of_pipelines=number_of_pipelines,
@@ -201,6 +201,7 @@ class CICFilter(LiteXModule):
         )
 
         integrator_offset = (self.integrator_stages.integrators_output_index_offset + 1) % number_of_pipelines # +1 is because we use this inside a sync block which adds 1 more clock cycle of latency
+        self.skip = Signal(reset=1)
 
         self.sync += [
             self.integrator_stages.integrators_input_data.eq(2 * self.sink.data - 1),
@@ -210,11 +211,15 @@ class CICFilter(LiteXModule):
             self.comb_stages.combs_input_data_valid.eq(self.integrator_stages.integrators_output_data_valid),
 
             self.source.data.eq(self.comb_stages.combs_output_data),
-            self.source.valid.eq(self.comb_stages.combs_output_data_valid),
+            self.source.valid.eq(self.comb_stages.combs_output_data_valid & ~self.skip),
 
             If(((self.comb_stages.combs_output_data_pipeline_index + integrator_offset) >= number_of_pipelines),
                 self.filtered_data_pipeline_index.eq(self.comb_stages.combs_output_data_pipeline_index + (integrator_offset - number_of_pipelines)),
             ).Else(
                 self.filtered_data_pipeline_index.eq(self.comb_stages.combs_output_data_pipeline_index + integrator_offset),
+            ),
+
+            If((self.comb_stages.combs_output_data_valid & (self.filtered_data_pipeline_index == (number_of_pipelines - 2))),
+                self.skip.eq(0),
             ),
         ]

@@ -47,15 +47,20 @@ class FIRFilterMultiplierBlock(LiteXModule):
             buffer_write_port.we.eq(run_pipeline),
             buffer_write_port.adr.eq(buffer_write_counter),
 
-            buffer_read_port.re.eq(run_pipeline),
-            If((taps_counter == (number_of_taps - 2)),
-                buffer_read_port.adr.eq(buffer_read_special_counter),
-            ).Else(
-                buffer_read_port.adr.eq(buffer_read_counter),
+            If((run_pipeline),
+                If((taps_counter == (number_of_taps - 2)),
+                    buffer_read_port.adr.eq(buffer_read_special_counter),
+                ).Else(
+                    buffer_read_port.adr.eq(buffer_read_counter),
+                ),
             ),
 
             taps_read_port.re.eq(run_pipeline),
             taps_read_port.adr.eq(taps_read_counter),
+        ]
+
+        self.comb += [
+            buffer_read_port.re.eq(run_pipeline),
         ]
 
         self.comb += [
@@ -64,7 +69,13 @@ class FIRFilterMultiplierBlock(LiteXModule):
             self.source.valid.eq((taps_counter == 0) & buffer_read_port.dat_r[data_width]),
         ]
 
+        self.sync += [
+            self.sink.ready.eq(self.next_input_data_ready),
+        ]
+
+        data_temp = Signal(bits_sign=(data_width, True))
         data_temp_valid = Signal()
+        data_tap_temp_valid = Signal()
 
         tap_and_data_delay = 2
         tap_and_data_valid_delay_buffer = [Signal() for _ in range(tap_and_data_delay + 1)]
@@ -81,18 +92,27 @@ class FIRFilterMultiplierBlock(LiteXModule):
         self.accumulator_counter = Signal(min=0, max=(number_of_taps + 1))
 
         self.sync += [
-            If((taps_counter == 0),
-                buffer_write_port.dat_w[:data_width].eq(self.sink.data),
-                buffer_write_port.dat_w[data_width].eq(self.sink.valid),
-                data_temp_valid.eq(self.sink.valid),
+            If((run_pipeline),
+                If((taps_counter == 0),
+                    buffer_write_port.dat_w[:data_width].eq(self.sink.data),
+                    buffer_write_port.dat_w[data_width].eq(self.sink.valid),
+                    data_temp_valid.eq(self.sink.valid),
+                ).Else(
+                    buffer_write_port.dat_w.eq(buffer_read_port.dat_r),
+                ),
             ).Else(
-                buffer_write_port.dat_w.eq(buffer_read_port.dat_r),
+                data_temp_valid.eq(0),
             ),
         ]
 
+        self.sync += [
+            data_temp.eq(buffer_write_port.dat_w[:data_width]),
+            data_tap_temp_valid.eq(data_temp_valid),
+        ]
+
         self.comb += [
-            tap_and_data_valid_delay_buffer[0].eq(data_temp_valid),
-            data_delay_buffer[0].eq(buffer_write_port.dat_w[:data_width]),
+            tap_and_data_valid_delay_buffer[0].eq(data_tap_temp_valid),
+            data_delay_buffer[0].eq(data_temp),
             tap_delay_buffer[0].eq(taps_read_port.dat_r),
         ]
 
@@ -204,7 +224,7 @@ class FIRFilter(LiteXModule):
         for i in range(1, number_of_multipliers):
             self.comb += [
                 fir_blocks[i].sink.data.eq(fir_blocks[i - 1].source.data),
-                fir_blocks[i].sink.valid.eq(fir_blocks[i - 1].source.valid),
+                fir_blocks[i].sink.valid.eq(fir_blocks[i - 1].source.valid & self.sink.valid),
             ]
 
         accumulator_tree_split_factor = 2
