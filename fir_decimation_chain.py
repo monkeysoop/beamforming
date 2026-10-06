@@ -7,8 +7,6 @@ from filter_validator import validate_chain
 from litex.gen import LiteXModule, Signal, If
 from litex.soc.interconnect.stream import Endpoint, EndpointDescription, SyncFIFO
 
-from migen.sim import run_simulation
-
 import math
 
 
