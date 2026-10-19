@@ -52,7 +52,7 @@ class FirDecimationChain(LiteXModule):
         for fifo_data_width in self.fifo_data_widths:
             fifo = SyncFIFO(
                 layout=[("data", fifo_data_width)],
-                depth=number_of_pipelines,
+                depth=(2 * number_of_pipelines),
                 buffered=True
             )
             self.submodules += fifo
