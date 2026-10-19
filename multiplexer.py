@@ -43,6 +43,8 @@ class Multiplexer(LiteXModule):
                 ).Else(
                     input_counter.eq(input_counter + 1),
                 ),
+            ).Else(
+                input_counter.eq(0),
             ),
         ]
 

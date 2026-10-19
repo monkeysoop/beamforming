@@ -130,7 +130,7 @@ class CICFilter(LiteXModule):
         self.sinks = [Endpoint(EndpointDescription([("data", (input_data_width + 1), True)])) for _ in range(number_of_inputs)]
         self.source = Endpoint(EndpointDescription([("data", self.register_max_bit_width, True)]))
 
-        max_number_of_pipelines_per_input = (number_of_pipelines // number_of_inputs)
+        max_number_of_pipelines_per_input = ((number_of_pipelines + number_of_inputs - 1) // number_of_inputs)
         number_of_pipelines_left = number_of_pipelines
         self.integrator_chains = []
         self.decimators = []
@@ -140,7 +140,7 @@ class CICFilter(LiteXModule):
             number_of_pipelines_left -= current_number_of_pipelines
             for _ in range(number_of_stages):
                 integrator_stage = CICFilterIntegratorStage(
-                    number_of_pipelines=current_number_of_pipelines,
+                    number_of_pipelines=max(current_number_of_pipelines, 2),
                     data_width=self.register_max_bit_width,
                     clock_domain=clock_domain,
                 )
